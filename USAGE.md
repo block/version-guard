@@ -346,7 +346,9 @@ Version Guard attributes infrastructure resources to services using a **3-tier f
 **Priority Order** (highest to lowest):
 
 1. **Resource Tags** (Primary, Fastest)
-   - Checks Wiz tags: `app`, `application`, `service`
+   - Checks AWS tags (configurable via `TAG_APP_KEYS` environment variable)
+   - Default tag keys: `app`, `application`, `service` (tried in order)
+   - Customize to match your organization's tagging conventions
    - **Speed**: Instant (already in CSV data)
    - **Accuracy**: Depends on tagging discipline
 
@@ -427,10 +429,16 @@ func (c *MyRegistryClient) GetServiceByCloudAccount(ctx context.Context, account
 
 1. **Tag your resources properly**:
    ```bash
+   # Use one of the configured tag keys (default: app, application, or service)
    aws rds add-tags-to-resource \
      --resource-name arn:aws:rds:us-east-1:123:cluster:my-db \
      --tags Key=app,Value=my-service
+
+   # Or match your organization's custom tag convention
+   # (if you've customized TAG_APP_KEYS environment variable)
    ```
+
+   **Note**: If your organization uses different tag keys (e.g., `team`, `component`), configure Version Guard to match by setting the `TAG_APP_KEYS` environment variable.
 
 2. **Ensure registry data is current** (if using registry):
    - Keep cloud account mappings up-to-date
@@ -472,9 +480,31 @@ S3_PREFIX=snapshots/
 # gRPC Service
 GRPC_PORT=8080
 
+# Tag Configuration (customize AWS resource tag keys)
+TAG_APP_KEYS=app,application,service
+TAG_ENV_KEYS=environment,env
+TAG_BRAND_KEYS=brand
+
 # Logging
 LOG_LEVEL=info
 ```
+
+**Customizing Tag Keys:**
+
+Version Guard extracts metadata from AWS resource tags to determine service ownership, environment, and brand. By default, it looks for tags like `app`, `application`, `service`, etc. Customize these to match your organization's tagging conventions:
+
+```bash
+# Example: Organization uses "cost-center" for business units
+TAG_BRAND_KEYS=cost-center,department,business-unit
+
+# Example: Organization uses "team" for service attribution
+TAG_APP_KEYS=team,squad,component,application
+
+# Example: Organization uses "env" exclusively
+TAG_ENV_KEYS=env
+```
+
+Tag keys are tried in order — the first matching tag wins.
 
 See `.env.example` for a complete template.
 
@@ -607,9 +637,9 @@ Version Guard provides emitter interfaces for you to implement. See [ARCHITECTUR
        endpoint string
    }
 
-   func (e *MyEmitter) Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*emitters.ASRResult, error) {
+   func (e *MyEmitter) Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*emitters.IssueTrackerResult, error) {
        // Send findings to your issue tracker, dashboard, etc.
-       return &emitters.ASRResult{IssuesCreated: len(findings)}, nil
+       return &emitters.IssueTrackerResult{IssuesCreated: len(findings)}, nil
    }
    ```
 

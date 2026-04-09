@@ -33,13 +33,16 @@ type EKSInventorySource struct {
 	client         *Client
 	reportID       string
 	registryClient registry.Client // Optional: for service attribution when tags are missing
+	tagConfig      *TagConfig      // Configurable tag key mappings
 }
 
-// NewEKSInventorySource creates a new Wiz-based EKS inventory source
+// NewEKSInventorySource creates a new Wiz-based EKS inventory source with default tag configuration.
+// Use WithTagConfig() to customize tag key mappings.
 func NewEKSInventorySource(client *Client, reportID string) *EKSInventorySource {
 	return &EKSInventorySource{
-		client:   client,
-		reportID: reportID,
+		client:    client,
+		reportID:  reportID,
+		tagConfig: DefaultTagConfig(),
 	}
 }
 
@@ -47,6 +50,15 @@ func NewEKSInventorySource(client *Client, reportID string) *EKSInventorySource 
 // When tags are missing, the registry will be queried to map AWS account → service.
 func (s *EKSInventorySource) WithRegistryClient(registryClient registry.Client) *EKSInventorySource {
 	s.registryClient = registryClient
+	return s
+}
+
+// WithTagConfig sets custom tag key mappings for extracting metadata.
+// If not called, uses DefaultTagConfig() with standard AWS tag conventions.
+func (s *EKSInventorySource) WithTagConfig(config *TagConfig) *EKSInventorySource {
+	if config != nil {
+		s.tagConfig = config
+	}
 	return s
 }
 
@@ -171,8 +183,8 @@ func (s *EKSInventorySource) parseEKSRow(ctx context.Context, row []string) (*ty
 	// This helps maintain consistency with other AWS resources
 	pseudoARN := fmt.Sprintf("arn:aws:eks:%s:%s:cluster/%s", region, accountID, clusterName)
 
-	// Extract service name from tags
-	service := GetTagValue(tags, AppTags)
+	// Extract service name from tags (using configurable tag keys)
+	service := s.tagConfig.GetAppTag(tags)
 	if service == "" {
 		// Try registry lookup by AWS account (if registry is configured)
 		if s.registryClient != nil {
@@ -188,8 +200,8 @@ func (s *EKSInventorySource) parseEKSRow(ctx context.Context, row []string) (*ty
 		}
 	}
 
-	// Extract brand from tags
-	brand := GetTagValue(tags, BrandTags)
+	// Extract brand (using configurable tag keys)
+	brand := s.tagConfig.GetBrandTag(tags)
 	// Note: This report format doesn't have a products column for brand inference
 
 	resource := &types.Resource{

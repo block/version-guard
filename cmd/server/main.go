@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,9 +62,39 @@ type ServerCLI struct {
 	// Service configuration
 	GRPCPort int `help:"gRPC service port" default:"8080" env:"GRPC_PORT"`
 
+	// Tag configuration (comma-separated lists for AWS resource tags)
+	TagAppKeys   string `help:"Comma-separated tag keys for application/service name" default:"app,application,service" env:"TAG_APP_KEYS"`
+	TagEnvKeys   string `help:"Comma-separated tag keys for environment" default:"environment,env" env:"TAG_ENV_KEYS"`
+	TagBrandKeys string `help:"Comma-separated tag keys for brand/business unit" default:"brand" env:"TAG_BRAND_KEYS"`
+
 	// Global flags
 	Verbose bool `short:"v" help:"Enable verbose logging"`
 	DryRun  bool `help:"Run in dry-run mode (no Temporal workers started)"`
+}
+
+// parseTagKeys parses a comma-separated string into a slice of tag keys
+func parseTagKeys(input string) []string {
+	if input == "" {
+		return []string{}
+	}
+	parts := strings.Split(input, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// buildTagConfig creates a TagConfig from the environment variables
+func (s *ServerCLI) buildTagConfig() *wiz.TagConfig {
+	return &wiz.TagConfig{
+		AppTags:   parseTagKeys(s.TagAppKeys),
+		EnvTags:   parseTagKeys(s.TagEnvKeys),
+		BrandTags: parseTagKeys(s.TagBrandKeys),
+	}
 }
 
 func (s *ServerCLI) Run(_ *kong.Context) error {
@@ -80,6 +111,9 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  Wiz Cache TTL: %d hours\n", s.WizCacheTTLHours)
 		fmt.Printf("  AWS Region: %s\n", s.AWSRegion)
 		fmt.Printf("  S3 Prefix: %s\n", s.S3Prefix)
+		fmt.Printf("  Tag Keys - App: %s\n", s.TagAppKeys)
+		fmt.Printf("  Tag Keys - Env: %s\n", s.TagEnvKeys)
+		fmt.Printf("  Tag Keys - Brand: %s\n", s.TagBrandKeys)
 	}
 
 	if s.DryRun {
@@ -124,6 +158,15 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	invSources := make(map[types.ResourceType]inventory.InventorySource)
 	eolProviders := make(map[types.ResourceType]eol.Provider)
 
+	// Build tag configuration from environment variables
+	tagConfig := s.buildTagConfig()
+	if s.Verbose {
+		fmt.Printf("\n✓ Tag configuration loaded:\n")
+		fmt.Printf("  App tags: %v\n", tagConfig.AppTags)
+		fmt.Printf("  Env tags: %v\n", tagConfig.EnvTags)
+		fmt.Printf("  Brand tags: %v\n", tagConfig.BrandTags)
+	}
+
 	// Configure inventory sources
 	if s.WizClientIDSecret != "" && s.WizClientSecretSecret != "" {
 		// Real Wiz credentials provided — use live inventory
@@ -132,15 +175,18 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		wizClient := wiz.NewClient(wizHTTPClient, time.Duration(s.WizCacheTTLHours)*time.Hour)
 
 		if s.WizAuroraReportID != "" {
-			invSources[types.ResourceTypeAurora] = wiz.NewAuroraInventorySource(wizClient, s.WizAuroraReportID)
+			invSources[types.ResourceTypeAurora] = wiz.NewAuroraInventorySource(wizClient, s.WizAuroraReportID).
+				WithTagConfig(tagConfig)
 			fmt.Println("✓ Aurora inventory source configured (Wiz)")
 		}
 		if s.WizElastiCacheReportID != "" {
-			invSources[types.ResourceTypeElastiCache] = wiz.NewElastiCacheInventorySource(wizClient, s.WizElastiCacheReportID)
+			invSources[types.ResourceTypeElastiCache] = wiz.NewElastiCacheInventorySource(wizClient, s.WizElastiCacheReportID).
+				WithTagConfig(tagConfig)
 			fmt.Println("✓ ElastiCache inventory source configured (Wiz)")
 		}
 		if s.WizEKSReportID != "" {
-			invSources[types.ResourceTypeEKS] = wiz.NewEKSInventorySource(wizClient, s.WizEKSReportID)
+			invSources[types.ResourceTypeEKS] = wiz.NewEKSInventorySource(wizClient, s.WizEKSReportID).
+				WithTagConfig(tagConfig)
 			fmt.Println("✓ EKS inventory source configured (Wiz)")
 		}
 	} else {

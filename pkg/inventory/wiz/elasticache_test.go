@@ -178,7 +178,7 @@ func TestElastiCacheInventorySource_FiltersNonClusterTypes(t *testing.T) {
 
 	// CSV with mixed nativeTypes — only cluster rows should be included
 	csvData := `externalId,name,nativeType,cloudAccount.externalId,versionDetails.version,region,tags,typeFields.kind
-arn:aws:elasticache:us-west-2:123456789012:cluster:my-redis-001,my-redis-001,elastiCache/Redis/cluster,123456789012,7.1.0,us-west-2,"[{""key"":""block-appname"",""value"":""myapp""}]",Redis
+arn:aws:elasticache:us-west-2:123456789012:cluster:my-redis-001,my-redis-001,elastiCache/Redis/cluster,123456789012,7.1.0,us-west-2,"[{""key"":""app"",""value"":""myapp""}]",Redis
 arn:aws:elasticache:us-west-2:123456789012:snapshot:my-snapshot,my-snapshot,elasticache#snapshot,123456789012,,us-west-2,[],
 arn:aws:elasticache:us-west-2:123456789012:user:default,default,elasticache#user,123456789012,,us-west-2,[],`
 

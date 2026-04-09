@@ -169,6 +169,23 @@ Version Guard is configured via environment variables or CLI flags:
 | `AWS_REGION` | AWS region for EOL APIs | `us-west-2` |
 | `WIZ_CLIENT_ID_SECRET` | Wiz client ID (optional) | - |
 | `WIZ_CLIENT_SECRET_SECRET` | Wiz client secret (optional) | - |
+| `TAG_APP_KEYS` | Comma-separated AWS tag keys for app/service | `app,application,service` |
+| `TAG_ENV_KEYS` | Comma-separated AWS tag keys for environment | `environment,env` |
+| `TAG_BRAND_KEYS` | Comma-separated AWS tag keys for brand/business unit | `brand` |
+
+**Customizing AWS Tag Keys:**
+
+Version Guard extracts metadata (service name, environment, brand) from AWS resource tags. By default, it looks for tags like `app`, `application`, or `service`. You can customize these to match your organization's tagging conventions:
+
+```bash
+# Example: Your organization uses "cost-center" instead of "brand"
+export TAG_BRAND_KEYS="cost-center,department,business-unit"
+
+# Example: Your organization uses "team" for service attribution
+export TAG_APP_KEYS="team,squad,application"
+```
+
+The tag keys are tried in order — the first matching tag wins.
 
 See `./bin/version-guard --help` for all options.
 
@@ -190,12 +207,12 @@ Version Guard provides **interfaces for custom emitters** so you can integrate w
 See `pkg/emitters/emitters.go` for interface definitions:
 
 ```go
-type ASREmitter interface {
-    Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*ASRResult, error)
+type IssueTrackerEmitter interface {
+    Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*IssueTrackerResult, error)
 }
 
-type DXEmitter interface {
-    Emit(ctx context.Context, snapshotID string, summary *types.SnapshotSummary) (*DXResult, error)
+type DashboardEmitter interface {
+    Emit(ctx context.Context, snapshotID string, summary *types.SnapshotSummary) (*DashboardResult, error)
 }
 ```
 

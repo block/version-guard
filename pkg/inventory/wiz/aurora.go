@@ -28,18 +28,6 @@ const (
 	colMinRequired   = 8 // minimum number of columns expected
 )
 
-// Tag keys for extracting metadata
-var (
-	// AppTags are the possible tag keys for application name
-	AppTags = []string{"block-appname", "application", "app"}
-
-	// EnvTags are the possible tag keys for environment
-	EnvTags = []string{"block-environment", "environment", "env"}
-
-	// BrandTags are the possible tag keys for brand
-	BrandTags = []string{"brand", "block-brand"}
-)
-
 // AuroraInventorySource fetches Aurora/RDS cluster inventory from Wiz saved reports
 //
 //nolint:govet // field alignment sacrificed for logical grouping
@@ -47,13 +35,16 @@ type AuroraInventorySource struct {
 	client         *Client
 	reportID       string
 	registryClient registry.Client // Optional: for service attribution when tags are missing
+	tagConfig      *TagConfig      // Configurable tag key mappings
 }
 
-// NewAuroraInventorySource creates a new Wiz-based Aurora inventory source
+// NewAuroraInventorySource creates a new Wiz-based Aurora inventory source with default tag configuration.
+// Use WithTagConfig() to customize tag key mappings.
 func NewAuroraInventorySource(client *Client, reportID string) *AuroraInventorySource {
 	return &AuroraInventorySource{
-		client:   client,
-		reportID: reportID,
+		client:    client,
+		reportID:  reportID,
+		tagConfig: DefaultTagConfig(),
 	}
 }
 
@@ -61,6 +52,15 @@ func NewAuroraInventorySource(client *Client, reportID string) *AuroraInventoryS
 // When tags are missing, the registry will be queried to map AWS account → service.
 func (s *AuroraInventorySource) WithRegistryClient(registryClient registry.Client) *AuroraInventorySource {
 	s.registryClient = registryClient
+	return s
+}
+
+// WithTagConfig sets custom tag key mappings for extracting metadata.
+// If not called, uses DefaultTagConfig() with standard AWS tag conventions.
+func (s *AuroraInventorySource) WithTagConfig(config *TagConfig) *AuroraInventorySource {
+	if config != nil {
+		s.tagConfig = config
+	}
 	return s
 }
 
@@ -172,8 +172,8 @@ func (s *AuroraInventorySource) parseAuroraRow(ctx context.Context, row []string
 		tags = make(map[string]string)
 	}
 
-	// Extract service name from tags
-	service := GetTagValue(tags, AppTags)
+	// Extract service name from tags (using configurable tag keys)
+	service := s.tagConfig.GetAppTag(tags)
 	if service == "" {
 		// Try registry lookup by AWS account (if registry is configured)
 		if s.registryClient != nil {
@@ -189,8 +189,8 @@ func (s *AuroraInventorySource) parseAuroraRow(ctx context.Context, row []string
 		}
 	}
 
-	// Extract brand
-	brand := GetTagValue(tags, BrandTags)
+	// Extract brand (using configurable tag keys)
+	brand := s.tagConfig.GetBrandTag(tags)
 
 	resource := &types.Resource{
 		ID:             resourceARN,

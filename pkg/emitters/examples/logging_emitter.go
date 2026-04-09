@@ -8,18 +8,18 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
-// LoggingASREmitter is an example emitter that logs findings to stdout
-// This demonstrates how to implement the ASREmitter interface
-type LoggingASREmitter struct{}
+// LoggingIssueTrackerEmitter is an example emitter that logs findings to stdout
+// This demonstrates how to implement the IssueTrackerEmitter interface
+type LoggingIssueTrackerEmitter struct{}
 
-// NewLoggingASREmitter creates a new logging ASR emitter
-func NewLoggingASREmitter() *LoggingASREmitter {
-	return &LoggingASREmitter{}
+// NewLoggingIssueTrackerEmitter creates a new logging issue tracker emitter
+func NewLoggingIssueTrackerEmitter() *LoggingIssueTrackerEmitter {
+	return &LoggingIssueTrackerEmitter{}
 }
 
 // Emit logs findings to stdout instead of creating actual issues
-func (e *LoggingASREmitter) Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*emitters.ASRResult, error) {
-	fmt.Printf("\n=== ASR Emitter (Logging Mode) ===\n")
+func (e *LoggingIssueTrackerEmitter) Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*emitters.IssueTrackerResult, error) {
+	fmt.Printf("\n=== Issue Tracker Emitter (Logging Mode) ===\n")
 	fmt.Printf("Snapshot ID: %s\n", snapshotID)
 	fmt.Printf("Total Findings: %d\n\n", len(findings))
 
@@ -44,30 +44,30 @@ func (e *LoggingASREmitter) Emit(ctx context.Context, snapshotID string, finding
 		}
 	}
 
-	result := &emitters.ASRResult{
+	result := &emitters.IssueTrackerResult{
 		IssuesCreated: created,
 		IssuesUpdated: updated,
 		IssuesClosed:  closed,
 	}
 
 	fmt.Printf("Summary: %d created/updated, %d closed\n", created, closed)
-	fmt.Printf("=====================================\n\n")
+	fmt.Printf("============================================\n\n")
 
 	return result, nil
 }
 
-// LoggingDXEmitter is an example emitter that logs compliance summaries to stdout
-// This demonstrates how to implement the DXEmitter interface
-type LoggingDXEmitter struct{}
+// LoggingDashboardEmitter is an example emitter that logs compliance summaries to stdout
+// This demonstrates how to implement the DashboardEmitter interface
+type LoggingDashboardEmitter struct{}
 
-// NewLoggingDXEmitter creates a new logging DX emitter
-func NewLoggingDXEmitter() *LoggingDXEmitter {
-	return &LoggingDXEmitter{}
+// NewLoggingDashboardEmitter creates a new logging dashboard emitter
+func NewLoggingDashboardEmitter() *LoggingDashboardEmitter {
+	return &LoggingDashboardEmitter{}
 }
 
-// Emit logs compliance summary to stdout instead of pushing to DX Scorecards
-func (e *LoggingDXEmitter) Emit(ctx context.Context, snapshotID string, summary *types.SnapshotSummary) (*emitters.DXResult, error) {
-	fmt.Printf("\n=== DX Scorecard Emitter (Logging Mode) ===\n")
+// Emit logs compliance summary to stdout instead of pushing to a dashboard
+func (e *LoggingDashboardEmitter) Emit(ctx context.Context, snapshotID string, summary *types.SnapshotSummary) (*emitters.DashboardResult, error) {
+	fmt.Printf("\n=== Dashboard Emitter (Logging Mode) ===\n")
 	fmt.Printf("Snapshot ID: %s\n\n", snapshotID)
 
 	fmt.Printf("Overall Compliance:\n")
@@ -81,10 +81,10 @@ func (e *LoggingDXEmitter) Emit(ctx context.Context, snapshotID string, summary 
 	fmt.Printf("  ⚪ Unknown: %d (%.1f%%)\n\n", summary.UnknownCount, float64(summary.UnknownCount)*100/float64(summary.TotalResources))
 
 	servicesUpdated := len(summary.ByService)
-	fmt.Printf("Would update %d services in DX Scorecard\n", servicesUpdated)
-	fmt.Printf("==========================================\n\n")
+	fmt.Printf("Would update %d services in dashboard\n", servicesUpdated)
+	fmt.Printf("========================================\n\n")
 
-	return &emitters.DXResult{
+	return &emitters.DashboardResult{
 		ServicesUpdated: servicesUpdated,
 	}, nil
 }

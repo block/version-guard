@@ -18,13 +18,16 @@ type ElastiCacheInventorySource struct {
 	client         *Client
 	reportID       string
 	registryClient registry.Client // Optional: for service attribution when tags are missing
+	tagConfig      *TagConfig      // Configurable tag key mappings
 }
 
-// NewElastiCacheInventorySource creates a new Wiz-based ElastiCache inventory source
+// NewElastiCacheInventorySource creates a new Wiz-based ElastiCache inventory source with default tag configuration.
+// Use WithTagConfig() to customize tag key mappings.
 func NewElastiCacheInventorySource(client *Client, reportID string) *ElastiCacheInventorySource {
 	return &ElastiCacheInventorySource{
-		client:   client,
-		reportID: reportID,
+		client:    client,
+		reportID:  reportID,
+		tagConfig: DefaultTagConfig(),
 	}
 }
 
@@ -32,6 +35,15 @@ func NewElastiCacheInventorySource(client *Client, reportID string) *ElastiCache
 // When tags are missing, the registry will be queried to map AWS account → service.
 func (s *ElastiCacheInventorySource) WithRegistryClient(registryClient registry.Client) *ElastiCacheInventorySource {
 	s.registryClient = registryClient
+	return s
+}
+
+// WithTagConfig sets custom tag key mappings for extracting metadata.
+// If not called, uses DefaultTagConfig() with standard AWS tag conventions.
+func (s *ElastiCacheInventorySource) WithTagConfig(config *TagConfig) *ElastiCacheInventorySource {
+	if config != nil {
+		s.tagConfig = config
+	}
 	return s
 }
 
@@ -141,8 +153,8 @@ func (s *ElastiCacheInventorySource) parseElastiCacheRow(ctx context.Context, ro
 		tags = make(map[string]string)
 	}
 
-	// Extract service name from tags
-	service := GetTagValue(tags, AppTags)
+	// Extract service name from tags (using configurable tag keys)
+	service := s.tagConfig.GetAppTag(tags)
 	if service == "" {
 		// Try registry lookup by AWS account (if registry is configured)
 		if s.registryClient != nil {
@@ -158,8 +170,8 @@ func (s *ElastiCacheInventorySource) parseElastiCacheRow(ctx context.Context, ro
 		}
 	}
 
-	// Extract brand
-	brand := GetTagValue(tags, BrandTags)
+	// Extract brand (using configurable tag keys)
+	brand := s.tagConfig.GetBrandTag(tags)
 
 	resource := &types.Resource{
 		ID:             resourceARN,

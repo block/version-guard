@@ -495,14 +495,14 @@ Version Guard provides **emitter interfaces** for integration with your systems.
 ### Emitter Interfaces
 
 ```go
-// ASREmitter - Issue tracking integration
-type ASREmitter interface {
-    Emit(ctx context.Context, snapshotID string, findings []*Finding) (*ASRResult, error)
+// IssueTrackerEmitter - Issue tracking integration
+type IssueTrackerEmitter interface {
+    Emit(ctx context.Context, snapshotID string, findings []*Finding) (*IssueTrackerResult, error)
 }
 
-// DXEmitter - Dashboard integration
-type DXEmitter interface {
-    Emit(ctx context.Context, snapshotID string, summary *SnapshotSummary) (*DXResult, error)
+// DashboardEmitter - Dashboard integration
+type DashboardEmitter interface {
+    Emit(ctx context.Context, snapshotID string, summary *SnapshotSummary) (*DashboardResult, error)
 }
 ```
 
@@ -513,7 +513,7 @@ type JiraEmitter struct {
     client *jira.Client
 }
 
-func (e *JiraEmitter) Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*emitters.ASRResult, error) {
+func (e *JiraEmitter) Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*emitters.IssueTrackerResult, error) {
     created := 0
 
     for _, finding := range findings {
@@ -534,7 +534,7 @@ func (e *JiraEmitter) Emit(ctx context.Context, snapshotID string, findings []*t
         }
     }
 
-    return &emitters.ASRResult{IssuesCreated: created}, nil
+    return &emitters.IssueTrackerResult{IssuesCreated: created}, nil
 }
 ```
 
@@ -773,7 +773,7 @@ A: The core detection logic (detectors, policies, EOL providers) can be used sta
 A: Implement `InventorySource` and `EOLProvider` for that cloud, add to `CloudProvider` enum, create detectors.
 
 **Q: What if my organization uses a different issue tracker?**
-A: Implement the `ASREmitter` interface for your system (Jira, ServiceNow, Linear, etc.).
+A: Implement the `IssueTrackerEmitter` interface for your system (Jira, ServiceNow, Linear, etc.).
 
 **Q: Can I customize the Red/Yellow/Green policy?**
 A: Yes! Implement the `VersionPolicy` interface with your own rules.

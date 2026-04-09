@@ -225,11 +225,11 @@ func TestParseAuroraRow_ServiceExtraction(t *testing.T) {
 		serviceMap[r.Name] = r.Service
 	}
 
-	assert.Equal(t, "legacy-payments", serviceMap["legacy-mysql-56"], "Should extract from block-appname tag")
+	assert.Equal(t, "legacy-payments", serviceMap["legacy-mysql-56"], "Should extract from app tag")
 	assert.Equal(t, "billing", serviceMap["mysql-57-extended"], "Should extract from application tag")
 	assert.Equal(t, "analytics", serviceMap["mysql-57-approaching"], "Should extract from app tag")
-	assert.Equal(t, "payments", serviceMap["mysql-80-current"], "Should extract from block-appname tag")
-	assert.Equal(t, "user-service", serviceMap["postgres-11-deprecated"], "Should extract from block-appname tag")
+	assert.Equal(t, "payments", serviceMap["mysql-80-current"], "Should extract from app tag")
+	assert.Equal(t, "user-service", serviceMap["postgres-11-deprecated"], "Should extract from app tag")
 
 	mockWizClient.AssertExpectations(t)
 }
@@ -279,7 +279,7 @@ func TestAuroraInventorySource_RegistryFallback_TagsTakePrecedence(t *testing.T)
 
 	// CSV data WITH app tags (tags should take precedence over registry)
 	csvData := `externalId,name,nativeType,cloudAccount.externalId,versionDetails.version,region,tags,typeFields.kind
-arn:aws:rds:us-east-1:888777666555:cluster:tagged-cluster,tagged-cluster,rds/AmazonAuroraMySQL/cluster,888777666555,8.0.mysql_aurora.3.05.2,us-east-1,"[{""key"":""block-appname"",""value"":""payments""}]",AmazonAuroraMySQL`
+arn:aws:rds:us-east-1:888777666555:cluster:tagged-cluster,tagged-cluster,rds/AmazonAuroraMySQL/cluster,888777666555,8.0.mysql_aurora.3.05.2,us-east-1,"[{""key"":""app"",""value"":""payments""}]",AmazonAuroraMySQL`
 
 	mockWizClient := new(MockWizClient)
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)

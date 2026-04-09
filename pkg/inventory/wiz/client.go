@@ -223,12 +223,3 @@ func parseTagObject(tagObj string) (key, value string) {
 	return key, value
 }
 
-// GetTagValue retrieves a tag value from a tags map, trying multiple possible keys
-func GetTagValue(tags map[string]string, possibleKeys []string) string {
-	for _, key := range possibleKeys {
-		if value, ok := tags[key]; ok && value != "" {
-			return value
-		}
-	}
-	return ""
-}

@@ -6,26 +6,26 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
-// ASREmitter emits findings to AppSecReporter (SCC issue tracking)
-type ASREmitter interface {
-	// Emit creates or updates ASR issues for the given findings
-	Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*ASRResult, error)
+// IssueTrackerEmitter emits findings to an issue tracking system (e.g., Jira, ServiceNow, Linear)
+type IssueTrackerEmitter interface {
+	// Emit creates or updates issues for the given findings
+	Emit(ctx context.Context, snapshotID string, findings []*types.Finding) (*IssueTrackerResult, error)
 }
 
-// ASRResult contains the result of emitting to ASR
-type ASRResult struct {
+// IssueTrackerResult contains the result of emitting to an issue tracker
+type IssueTrackerResult struct {
 	IssuesCreated int
 	IssuesUpdated int
 	IssuesClosed  int
 }
 
-// DXEmitter pushes compliance data to DX Scorecards
-type DXEmitter interface {
-	// Emit pushes summary statistics to DX Scorecards
-	Emit(ctx context.Context, snapshotID string, summary *types.SnapshotSummary) (*DXResult, error)
+// DashboardEmitter pushes compliance data to a dashboard or scorecard system
+type DashboardEmitter interface {
+	// Emit pushes summary statistics to the dashboard
+	Emit(ctx context.Context, snapshotID string, summary *types.SnapshotSummary) (*DashboardResult, error)
 }
 
-// DXResult contains the result of emitting to DX Scorecards
-type DXResult struct {
+// DashboardResult contains the result of emitting to a dashboard
+type DashboardResult struct {
 	ServicesUpdated int
 }
