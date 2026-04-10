@@ -15,18 +15,18 @@ import (
 
 // ProductMapping maps internal engine names to endoflife.date product identifiers
 var ProductMapping = map[string]string{
-	"kubernetes":             "amazon-eks",
-	"k8s":                    "amazon-eks",
-	"eks":                    "amazon-eks",
-	"postgres":               "amazon-rds-postgresql",
-	"postgresql":             "amazon-rds-postgresql",
-	"mysql":                  "amazon-rds-mysql",
-	"aurora-mysql":           "amazon-rds-mysql",
-	"aurora-postgresql":      "amazon-rds-postgresql",
-	"redis":                  "amazon-elasticache-redis",
-	"elasticache-redis":      "amazon-elasticache-redis",
-	"valkey":                 "valkey",
-	"elasticache-valkey":     "valkey",
+	"kubernetes":         "amazon-eks",
+	"k8s":                "amazon-eks",
+	"eks":                "amazon-eks",
+	"postgres":           "amazon-rds-postgresql",
+	"postgresql":         "amazon-rds-postgresql",
+	"mysql":              "amazon-rds-mysql",
+	"aurora-mysql":       "amazon-rds-mysql",
+	"aurora-postgresql":  "amazon-rds-postgresql",
+	"redis":              "amazon-elasticache-redis",
+	"elasticache-redis":  "amazon-elasticache-redis",
+	"valkey":             "valkey",
+	"elasticache-valkey": "valkey",
 }
 
 // Provider fetches EOL data from endoflife.date API

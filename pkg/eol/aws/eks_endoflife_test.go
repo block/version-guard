@@ -166,9 +166,9 @@ func TestEKSEOLProvider_WithEndOfLifeClient(t *testing.T) {
 			return []*endoflife.ProductCycle{
 				{
 					Cycle:           "1.35",
-					ReleaseDate:     "2025-11-20",    // Different from static
-					EOL:             "2027-12-20",    // End of standard support
-					ExtendedSupport: "2029-05-20",    // End of extended support
+					ReleaseDate:     "2025-11-20", // Different from static
+					EOL:             "2027-12-20", // End of standard support
+					ExtendedSupport: "2029-05-20", // End of extended support
 				},
 			}, nil
 		},
