@@ -1,5 +1,7 @@
 name: Docker & Helm
 
+permissions: {}
+
 on:
   push:
     tags: ["v*"]
@@ -22,7 +24,9 @@ jobs:
           fetch-depth: 0
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
       - uses: helm/chart-testing-action@0d28d3144d3a25ea2cc349d6e59901c4ff469b3b # v2.7.0
-      - run: ct lint --target-branch ${{ github.event.pull_request.base.ref }} --charts charts/version-guard
+      - run: ct lint --target-branch "$BASE_REF" --charts charts/version-guard
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -80,5 +84,8 @@ jobs:
             exit 1
           fi
           helm package charts/version-guard --destination ./build
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "$HELM_TOKEN" | helm registry login ghcr.io -u "$HELM_USER" --password-stdin
           helm push ./build/version-guard-${CHART_VERSION}.tgz oci://ghcr.io/block/charts
+        env:
+          HELM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HELM_USER: ${{ github.actor }}
