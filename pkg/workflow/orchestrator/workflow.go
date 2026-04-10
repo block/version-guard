@@ -54,6 +54,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	logger := workflow.GetLogger(ctx)
 
 	// Ensure ScanID is set for correlation across child workflows and snapshots
+	// (scheduled executions pass empty ScanID)
 	if input.ScanID == "" {
 		input.ScanID = workflow.GetInfo(ctx).WorkflowExecution.ID
 	}

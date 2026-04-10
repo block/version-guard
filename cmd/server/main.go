@@ -27,6 +27,7 @@ import (
 	invmock "github.com/block/Version-Guard/pkg/inventory/mock"
 	"github.com/block/Version-Guard/pkg/inventory/wiz"
 	"github.com/block/Version-Guard/pkg/policy"
+	"github.com/block/Version-Guard/pkg/schedule"
 	"github.com/block/Version-Guard/pkg/snapshot"
 	"github.com/block/Version-Guard/pkg/store/memory"
 	"github.com/block/Version-Guard/pkg/types"
@@ -68,6 +69,12 @@ type ServerCLI struct {
 	TagAppKeys   string `help:"Comma-separated tag keys for application/service name" default:"app,application,service" env:"TAG_APP_KEYS"`
 	TagEnvKeys   string `help:"Comma-separated tag keys for environment" default:"environment,env" env:"TAG_ENV_KEYS"`
 	TagBrandKeys string `help:"Comma-separated tag keys for brand/business unit" default:"brand" env:"TAG_BRAND_KEYS"`
+
+	// Schedule configuration
+	ScheduleEnabled bool   `help:"Enable scheduled scanning" default:"false" env:"SCHEDULE_ENABLED"`
+	ScheduleCron    string `help:"Cron expression for scan schedule" default:"0 */6 * * *" env:"SCHEDULE_CRON"`
+	ScheduleID      string `help:"Temporal schedule ID" default:"version-guard-scan" env:"SCHEDULE_ID"`
+	ScheduleJitter  string `help:"Schedule jitter duration" default:"5m" env:"SCHEDULE_JITTER"`
 
 	// Global flags
 	Verbose bool `short:"v" help:"Enable verbose logging"`
@@ -126,6 +133,12 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  Tag Keys - App: %s\n", s.TagAppKeys)
 		fmt.Printf("  Tag Keys - Env: %s\n", s.TagEnvKeys)
 		fmt.Printf("  Tag Keys - Brand: %s\n", s.TagBrandKeys)
+		if s.ScheduleEnabled {
+			fmt.Printf("  Schedule: enabled (cron: %s, id: %s, jitter: %s)\n",
+				s.ScheduleCron, s.ScheduleID, s.ScheduleJitter)
+		} else {
+			fmt.Printf("  Schedule: disabled\n")
+		}
 	}
 
 	if s.DryRun {
@@ -348,10 +361,38 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Println("⚠️  Orchestrator snapshot activity not registered (no S3 store)")
 	}
 
+	// Create schedule (if enabled)
+	if s.ScheduleEnabled {
+		jitter, parseErr := time.ParseDuration(s.ScheduleJitter)
+		if parseErr != nil {
+			fmt.Printf("⚠️  Invalid schedule jitter %q, using default 5m: %v\n", s.ScheduleJitter, parseErr)
+			jitter = 5 * time.Minute
+		}
+
+		scheduleMgr := schedule.NewManager(temporalClient)
+		schedErr := scheduleMgr.EnsureSchedule(ctx, schedule.ScheduleConfig{
+			Enabled:        true,
+			ScheduleID:     s.ScheduleID,
+			CronExpression: s.ScheduleCron,
+			Jitter:         jitter,
+			TaskQueue:      s.TemporalTaskQueue,
+		})
+		if schedErr != nil {
+			fmt.Printf("⚠️  Failed to create/update schedule: %v\n", schedErr)
+			fmt.Println("   Worker will continue — trigger scans manually")
+		} else {
+			fmt.Printf("✓ Schedule configured: %s (cron: %s, jitter: %s)\n",
+				s.ScheduleID, s.ScheduleCron, s.ScheduleJitter)
+		}
+	}
+
 	// Start worker
 	fmt.Printf("\n✓ Temporal worker starting on queue: %s\n", s.TemporalTaskQueue)
 	fmt.Println("\nVersion Guard is ready!")
-	fmt.Println("\n📖 To trigger a scan, use the Temporal UI or CLI:")
+	if s.ScheduleEnabled {
+		fmt.Printf("   Scans will run automatically (schedule: %s)\n", s.ScheduleCron)
+	}
+	fmt.Println("\n📖 To trigger a scan manually, use the Temporal UI or CLI:")
 	fmt.Printf("   temporal workflow start --task-queue %s --type %s --input '{}'\n", s.TemporalTaskQueue, orchestrator.OrchestratorWorkflowType)
 	fmt.Println("\n📖 To query findings via gRPC:")
 	fmt.Printf("   grpcurl -plaintext localhost:%d list\n", s.GRPCPort)
