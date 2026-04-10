@@ -222,4 +222,3 @@ func parseTagObject(tagObj string) (key, value string) {
 
 	return key, value
 }
-

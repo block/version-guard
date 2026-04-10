@@ -29,13 +29,13 @@ type Client interface {
 // ProductCycle represents a single version/cycle from endoflife.date API
 // API docs: https://endoflife.date/docs/api/
 type ProductCycle struct {
-	Cycle           string `json:"cycle"`           // Version identifier (e.g., "1.31")
-	ReleaseDate     string `json:"releaseDate"`     // Release date (YYYY-MM-DD)
-	Support         string `json:"support"`         // End of standard support (YYYY-MM-DD or boolean)
-	EOL             string `json:"eol"`             // End of life date (YYYY-MM-DD or boolean)
-	ExtendedSupport any    `json:"extendedSupport"` // Extended support availability (boolean or date)
-	LTS             bool   `json:"lts"`             // Long-term support flag
-	Latest          string `json:"latest"`          // Latest patch version
+	Cycle             string `json:"cycle"`             // Version identifier (e.g., "1.31")
+	ReleaseDate       string `json:"releaseDate"`       // Release date (YYYY-MM-DD)
+	Support           string `json:"support"`           // End of standard support (YYYY-MM-DD or boolean)
+	EOL               string `json:"eol"`               // End of life date (YYYY-MM-DD or boolean)
+	ExtendedSupport   any    `json:"extendedSupport"`   // Extended support availability (boolean or date)
+	LTS               bool   `json:"lts"`               // Long-term support flag
+	Latest            string `json:"latest"`            // Latest patch version
 	LatestReleaseDate string `json:"latestReleaseDate"` // Latest patch release date
 }
 
