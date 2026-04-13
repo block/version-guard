@@ -14,12 +14,12 @@ import (
 
 // mockScheduleHandle implements client.ScheduleHandle for testing.
 type mockScheduleHandle struct {
-	id           string
 	describeOut  *client.ScheduleDescription
+	updateFn     func(client.ScheduleUpdateOptions)
+	id           string
 	describeErr  error
 	updateErr    error
 	updateCalled bool
-	updateFn     func(client.ScheduleUpdateOptions)
 }
 
 func (h *mockScheduleHandle) GetID() string                  { return h.id }
@@ -49,28 +49,28 @@ func (h *mockScheduleHandle) Update(_ context.Context, opts client.ScheduleUpdat
 	return h.updateErr
 }
 
-// mockScheduleCreator implements ScheduleCreator for testing.
-type mockScheduleCreator struct {
+// mockCreator implements Creator for testing.
+type mockCreator struct {
 	createErr    error
 	createHandle client.ScheduleHandle
 	handle       *mockScheduleHandle
 	createOpts   *client.ScheduleOptions
 }
 
-func (c *mockScheduleCreator) Create(_ context.Context, opts client.ScheduleOptions) (client.ScheduleHandle, error) {
+func (c *mockCreator) Create(_ context.Context, opts client.ScheduleOptions) (client.ScheduleHandle, error) { //nolint:gocritic // matches SDK interface
 	c.createOpts = &opts
 	return c.createHandle, c.createErr
 }
 
-func (c *mockScheduleCreator) GetHandle(_ context.Context, _ string) client.ScheduleHandle {
+func (c *mockCreator) GetHandle(_ context.Context, _ string) client.ScheduleHandle {
 	return c.handle
 }
 
 func TestEnsureSchedule_Disabled(t *testing.T) {
-	mock := &mockScheduleCreator{}
+	mock := &mockCreator{}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled: false,
 	})
 
@@ -79,12 +79,12 @@ func TestEnsureSchedule_Disabled(t *testing.T) {
 }
 
 func TestEnsureSchedule_CreatesNew(t *testing.T) {
-	mock := &mockScheduleCreator{
+	mock := &mockCreator{
 		createHandle: &mockScheduleHandle{id: "test-schedule"},
 	}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
@@ -114,13 +114,13 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 			},
 		},
 	}
-	mock := &mockScheduleCreator{
+	mock := &mockCreator{
 		createErr: temporal.ErrScheduleAlreadyRunning,
 		handle:    handle,
 	}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
@@ -144,13 +144,13 @@ func TestEnsureSchedule_AlreadyExists_DifferentCron(t *testing.T) {
 			},
 		},
 	}
-	mock := &mockScheduleCreator{
+	mock := &mockCreator{
 		createErr: temporal.ErrScheduleAlreadyRunning,
 		handle:    handle,
 	}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
@@ -163,12 +163,12 @@ func TestEnsureSchedule_AlreadyExists_DifferentCron(t *testing.T) {
 }
 
 func TestEnsureSchedule_CreateError(t *testing.T) {
-	mock := &mockScheduleCreator{
+	mock := &mockCreator{
 		createErr: errors.New("connection refused"),
 	}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
@@ -203,13 +203,13 @@ func TestEnsureSchedule_AlreadyExists_NilSpec(t *testing.T) {
 		assert.Equal(t, []string{"0 */6 * * *"}, result.Schedule.Spec.CronExpressions)
 		assert.Equal(t, 5*time.Minute, result.Schedule.Spec.Jitter)
 	}
-	mock := &mockScheduleCreator{
+	mock := &mockCreator{
 		createErr: temporal.ErrScheduleAlreadyRunning,
 		handle:    handle,
 	}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
@@ -226,13 +226,13 @@ func TestEnsureSchedule_DescribeError(t *testing.T) {
 		id:          "test-schedule",
 		describeErr: errors.New("not found"),
 	}
-	mock := &mockScheduleCreator{
+	mock := &mockCreator{
 		createErr: temporal.ErrScheduleAlreadyRunning,
 		handle:    handle,
 	}
 	mgr := NewManagerWithClient(mock)
 
-	err := mgr.EnsureSchedule(context.Background(), ScheduleConfig{
+	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",

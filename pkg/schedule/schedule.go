@@ -12,8 +12,8 @@ import (
 	"github.com/block/Version-Guard/pkg/workflow/orchestrator"
 )
 
-// ScheduleConfig holds configuration for the Temporal schedule.
-type ScheduleConfig struct {
+// Config holds configuration for the Temporal schedule.
+type Config struct {
 	Enabled        bool
 	ScheduleID     string
 	CronExpression string
@@ -22,15 +22,15 @@ type ScheduleConfig struct {
 	Paused         bool
 }
 
-// ScheduleCreator abstracts the Temporal schedule client for testability.
-type ScheduleCreator interface {
+// Creator abstracts the Temporal schedule client for testability.
+type Creator interface {
 	Create(ctx context.Context, options client.ScheduleOptions) (client.ScheduleHandle, error)
 	GetHandle(ctx context.Context, scheduleID string) client.ScheduleHandle
 }
 
 // Manager handles Temporal schedule lifecycle.
 type Manager struct {
-	scheduleClient ScheduleCreator
+	scheduleClient Creator
 }
 
 // NewManager creates a Manager from a Temporal client.
@@ -38,14 +38,14 @@ func NewManager(c client.Client) *Manager {
 	return &Manager{scheduleClient: c.ScheduleClient()}
 }
 
-// NewManagerWithClient creates a Manager with an explicit ScheduleCreator (for testing).
-func NewManagerWithClient(sc ScheduleCreator) *Manager {
+// NewManagerWithClient creates a Manager with an explicit Creator (for testing).
+func NewManagerWithClient(sc Creator) *Manager {
 	return &Manager{scheduleClient: sc}
 }
 
 // EnsureSchedule creates the schedule if it doesn't exist, or updates it
 // if the cron expression has changed.
-func (m *Manager) EnsureSchedule(ctx context.Context, cfg ScheduleConfig) error {
+func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 	if !cfg.Enabled {
 		return nil
 	}
