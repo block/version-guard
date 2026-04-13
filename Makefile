@@ -182,7 +182,7 @@ run-server: build ## Run gRPC server locally
 .PHONY: docker-build
 docker-build: ## Build Docker image
 	@echo "🐳 Building Docker image..."
-	@docker build -t block/version-guard:latest .
+	@docker build -t block/version-guard:latest -f deploy/Dockerfile .
 	@echo "✅ Docker image built: block/version-guard:latest"
 
 .PHONY: docker-run
