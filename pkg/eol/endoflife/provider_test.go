@@ -2,6 +2,7 @@ package endoflife
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,7 +350,7 @@ func TestProvider_BlocksNonStandardSchema(t *testing.T) {
 			if err == nil {
 				t.Errorf("Expected error for %s (non-standard schema), got nil", engine)
 			}
-			if err != nil && !contains(err.Error(), "non-standard") {
+			if err != nil && !strings.Contains(err.Error(), "non-standard") {
 				t.Errorf("Error should mention 'non-standard schema', got: %v", err)
 			}
 
@@ -360,21 +361,6 @@ func TestProvider_BlocksNonStandardSchema(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper function for string contains
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || substr == "" ||
-		(s != "" && substr != "" && indexOfSubstring(s, substr) >= 0))
-}
-
-func indexOfSubstring(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }
 
 func TestConvertCycle_ExtendedSupport(t *testing.T) {
