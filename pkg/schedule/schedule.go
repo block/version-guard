@@ -14,11 +14,11 @@ import (
 
 // Config holds configuration for the Temporal schedule.
 type Config struct {
-	Enabled        bool
 	ScheduleID     string
 	CronExpression string
-	Jitter         time.Duration
 	TaskQueue      string
+	Jitter         time.Duration
+	Enabled        bool
 	Paused         bool
 }
 

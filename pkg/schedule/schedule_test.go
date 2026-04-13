@@ -14,11 +14,11 @@ import (
 
 // mockScheduleHandle implements client.ScheduleHandle for testing.
 type mockScheduleHandle struct {
-	describeOut  *client.ScheduleDescription
-	updateFn     func(client.ScheduleUpdateOptions)
-	id           string
 	describeErr  error
 	updateErr    error
+	updateFn     func(client.ScheduleUpdateOptions)
+	describeOut  *client.ScheduleDescription
+	id           string
 	updateCalled bool
 }
 
