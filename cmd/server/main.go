@@ -57,7 +57,7 @@ type ServerCLI struct {
 
 	// S3 configuration (for snapshots)
 	S3Bucket string `help:"S3 bucket for snapshots" default:"version-guard-snapshots" env:"S3_BUCKET"`
-	S3Prefix string `help:"S3 prefix for snapshots" default:"snapshots" env:"S3_PREFIX"`
+	S3Prefix string `help:"S3 prefix for snapshots" default:"snapshots/" env:"S3_PREFIX"`
 
 	// Service configuration
 	GRPCPort int `help:"gRPC service port" default:"8080" env:"GRPC_PORT"`

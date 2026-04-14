@@ -52,6 +52,12 @@ type ResourceTypeResult struct {
 // Stage 3: Trigger the ActWorkflow (separate workflow) via signal
 func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
+
+	// Ensure ScanID is set for correlation across child workflows and snapshots
+	if input.ScanID == "" {
+		input.ScanID = workflow.GetInfo(ctx).WorkflowExecution.ID
+	}
+
 	logger.Info("Starting orchestrator workflow", "scanID", input.ScanID)
 
 	startTime := workflow.Now(ctx)
