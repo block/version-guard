@@ -10,6 +10,9 @@ serviceAccount:
   name: ""
   annotations: {}
 
+# Additional pod annotations (e.g. for service mesh sidecar configuration)
+podAnnotations: {}
+
 containerPort: 8080
 
 service:

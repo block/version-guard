@@ -2,7 +2,7 @@ apiVersion: v2
 name: version-guard
 description: Cloud infrastructure version drift and EOL detection
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "0.1.0"
 maintainers:
   - name: bakayolo
