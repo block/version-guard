@@ -202,6 +202,7 @@ Version Guard is configured via environment variables or CLI flags:
 | `TAG_APP_KEYS` | Comma-separated AWS tag keys for app/service | `app,application,service` |
 | `TAG_ENV_KEYS` | Comma-separated AWS tag keys for environment | `environment,env` |
 | `TAG_BRAND_KEYS` | Comma-separated AWS tag keys for brand/business unit | `brand` |
+| `--verbose` / `-v` | Enable debug-level logging | `false` |
 
 **Customizing AWS Tag Keys:**
 
@@ -216,6 +217,36 @@ export TAG_APP_KEYS="team,squad,application"
 ```
 
 The tag keys are tried in order — the first matching tag wins.
+
+**Logging:**
+
+Version Guard uses structured JSON logging via Go's `log/slog` package for production observability:
+
+```bash
+# Run with debug-level logging
+./bin/version-guard --verbose
+
+# Production mode (info-level logging only)
+./bin/version-guard
+```
+
+Logs are output in JSON format for easy parsing by log aggregation tools (Datadog, Splunk, CloudWatch Insights):
+
+```json
+{
+  "time": "2024-01-15T10:30:45Z",
+  "level": "WARN",
+  "msg": "failed to detect drift for resource",
+  "resource_id": "arn:aws:rds:us-west-2:123456789012:cluster:my-db",
+  "error": "version not found in EOL database"
+}
+```
+
+Benefits:
+- Machine-readable structured data with typed fields
+- Context-aware logging with trace IDs
+- Queryable logs (e.g., filter by `resource_id` or `error`)
+- Integrates seamlessly with observability platforms
 
 See `./bin/version-guard --help` for all options.
 
