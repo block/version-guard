@@ -297,26 +297,28 @@ func (p *Provider) convertCycle(engine, product string, cycle *ProductCycle) (*t
 		}
 	}
 
-	// Determine lifecycle status based on dates
+	// Determine lifecycle status based on dates.
+	// For products like EKS, the "support" field is absent and "eol" means
+	// end of standard support while "extendedSupport" is the true end of life.
+	// We treat eolDate as the standard support boundary when supportDate is nil.
 	now := time.Now()
 
-	// If we have an EOL date and we're past it, mark as EOL
-	if eolDate != nil && now.After(*eolDate) {
-		lifecycle.IsEOL = true
-		lifecycle.IsSupported = false
-		lifecycle.IsDeprecated = true
-		return lifecycle, nil
+	// Resolve the effective standard-support-end date
+	standardEnd := supportDate
+	if standardEnd == nil {
+		standardEnd = eolDate
 	}
 
-	// If we have extended support end and we're past standard support
-	if extendedSupportDate != nil && supportDate != nil && now.After(*supportDate) {
+	// Check extended support window first — must come before the EOL check
+	// so that resources in extended support get YELLOW, not RED.
+	if extendedSupportDate != nil && standardEnd != nil && now.After(*standardEnd) {
 		if now.Before(*extendedSupportDate) {
 			// In extended support window
 			lifecycle.IsSupported = true
 			lifecycle.IsExtendedSupport = true
 			lifecycle.IsDeprecated = true
 		} else {
-			// Past extended support
+			// Past extended support — truly EOL
 			lifecycle.IsEOL = true
 			lifecycle.IsSupported = false
 			lifecycle.IsDeprecated = true
@@ -324,11 +326,18 @@ func (p *Provider) convertCycle(engine, product string, cycle *ProductCycle) (*t
 		return lifecycle, nil
 	}
 
-	// If we're past support date but no extended support info
+	// Past EOL with no extended support available
+	if eolDate != nil && now.After(*eolDate) {
+		lifecycle.IsEOL = true
+		lifecycle.IsSupported = false
+		lifecycle.IsDeprecated = true
+		return lifecycle, nil
+	}
+
+	// Past standard support but no extended support info
 	if supportDate != nil && now.After(*supportDate) {
 		lifecycle.IsDeprecated = true
 		lifecycle.IsSupported = false
-		// If we have EOL date, use it; otherwise mark as deprecated but not EOL
 		if eolDate != nil && now.Before(*eolDate) {
 			lifecycle.IsEOL = false
 		}

@@ -71,8 +71,8 @@ func (p *DefaultPolicy) isRedStatus(lifecycle *types.VersionLifecycle) bool {
 		return true
 	}
 
-	// Deprecated
-	if lifecycle.IsDeprecated {
+	// Deprecated (but not if still in extended support)
+	if lifecycle.IsDeprecated && !lifecycle.IsExtendedSupport {
 		return true
 	}
 
