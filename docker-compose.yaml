@@ -1,0 +1,61 @@
+services:
+  temporal:
+    image: temporalio/admin-tools:latest
+    ports:
+      - "7233:7233"
+      - "8233:8233"
+    command: ["temporal", "server", "start-dev", "--ip", "0.0.0.0", "--namespace", "version-guard-dev"]
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "localhost:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      sh -c "
+        sleep 3 &&
+        mc alias set local http://minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/version-guard-snapshots &&
+        echo 'Bucket created'
+      "
+
+  version-guard:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      TEMPORAL_ENDPOINT: temporal:7233
+      TEMPORAL_NAMESPACE: version-guard-dev
+      S3_BUCKET: version-guard-snapshots
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      S3_ENDPOINT: http://minio:9000
+      WIZ_CLIENT_ID_SECRET: ${WIZ_CLIENT_ID_SECRET:-}
+      WIZ_CLIENT_SECRET_SECRET: ${WIZ_CLIENT_SECRET_SECRET:-}
+      WIZ_EKS_REPORT_ID: ${WIZ_EKS_REPORT_ID:-}
+      WIZ_AURORA_REPORT_ID: ${WIZ_AURORA_REPORT_ID:-}
+      WIZ_ELASTICACHE_REPORT_ID: ${WIZ_ELASTICACHE_REPORT_ID:-}
+    ports:
+      - "8080:8080"
+      - "8081:8081"

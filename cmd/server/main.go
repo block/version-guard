@@ -56,8 +56,9 @@ type ServerCLI struct {
 	AWSRegion string `help:"AWS region for EOL APIs" default:"us-west-2" env:"AWS_REGION"`
 
 	// S3 configuration (for snapshots)
-	S3Bucket string `help:"S3 bucket for snapshots" default:"version-guard-snapshots" env:"S3_BUCKET"`
-	S3Prefix string `help:"S3 prefix for snapshots" default:"snapshots/" env:"S3_PREFIX"`
+	S3Bucket   string `help:"S3 bucket for snapshots" default:"version-guard-snapshots" env:"S3_BUCKET"`
+	S3Prefix   string `help:"S3 prefix for snapshots" default:"snapshots/" env:"S3_PREFIX"`
+	S3Endpoint string `help:"Custom S3 endpoint (for MinIO/local dev)" env:"S3_ENDPOINT"`
 
 	// Service configuration
 	GRPCPort int `help:"gRPC service port" default:"8080" env:"GRPC_PORT"`
@@ -128,12 +129,20 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	// Initialize S3 snapshot store
 	var snapshotStore *snapshot.S3Store
 	ctx := context.Background()
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(s.AWSRegion))
+	configOpts := []func(*config.LoadOptions) error{config.WithRegion(s.AWSRegion)}
+	cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
 	if err != nil {
 		fmt.Printf("⚠️  Failed to load AWS config: %v\n", err)
 		fmt.Println("   Snapshots will not be persisted to S3")
 	} else {
-		s3Client := s3.NewFromConfig(cfg)
+		s3Opts := []func(*s3.Options){}
+		if s.S3Endpoint != "" {
+			s3Opts = append(s3Opts, func(o *s3.Options) {
+				o.BaseEndpoint = &s.S3Endpoint
+				o.UsePathStyle = true
+			})
+		}
+		s3Client := s3.NewFromConfig(cfg, s3Opts...)
 		snapshotStore = snapshot.NewS3Store(s3Client, s.S3Bucket, s.S3Prefix)
 		fmt.Printf("✓ S3 snapshot store initialized (bucket: %s)\n", s.S3Bucket)
 	}
