@@ -329,13 +329,9 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	// Orchestrator workflow activities
 	if snapshotStore != nil {
 		orchestratorActivities := orchestrator.NewActivities(st, snapshotStore)
-		w.RegisterActivityWithOptions(orchestratorActivities.RetrieveFindings, activity.RegisterOptions{Name: orchestrator.RetrieveFindingsActivityName})
 		w.RegisterActivityWithOptions(orchestratorActivities.CreateSnapshot, activity.RegisterOptions{Name: orchestrator.CreateSnapshotActivityName})
 		fmt.Println("✓ Orchestrator activities registered (with S3)")
 	} else {
-		// Without S3, we can still retrieve findings but can't create snapshots
-		orchestratorActivities := orchestrator.NewActivities(st, nil)
-		w.RegisterActivityWithOptions(orchestratorActivities.RetrieveFindings, activity.RegisterOptions{Name: orchestrator.RetrieveFindingsActivityName})
 		fmt.Println("⚠️  Orchestrator snapshot activity not registered (no S3 store)")
 	}
 

@@ -13,21 +13,16 @@ import (
 
 // Activity names
 const (
-	RetrieveFindingsActivityName = "version-guard.RetrieveFindings"
-	CreateSnapshotActivityName   = "version-guard.CreateSnapshot"
+	CreateSnapshotActivityName = "version-guard.CreateSnapshot"
 )
 
 // Activity input/output types
 
-type RetrieveFindingsInput struct {
-	ResourceType types.ResourceType
-}
-
 type CreateSnapshotInput struct {
-	ScanID         string
-	FindingsByType map[types.ResourceType][]*types.Finding
-	ScanStartTime  time.Time
-	ScanEndTime    time.Time
+	ScanID        string
+	ResourceTypes []types.ResourceType
+	ScanStartTime time.Time
+	ScanEndTime   time.Time
 }
 
 type SnapshotResult struct {
@@ -57,34 +52,27 @@ func NewActivities(
 	}
 }
 
-// RetrieveFindings retrieves all findings for a given resource type from the store
-func (a *Activities) RetrieveFindings(ctx context.Context, input RetrieveFindingsInput) ([]*types.Finding, error) {
-	logger := activity.GetLogger(ctx)
-	logger.Info("Retrieving findings from store", "resourceType", input.ResourceType)
-
-	filters := store.FindingFilters{
-		ResourceType: &input.ResourceType,
-	}
-
-	findings, err := a.Store.ListFindings(ctx, filters)
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Info("Findings retrieved", "count", len(findings))
-	return findings, nil
-}
-
-// CreateSnapshot creates a snapshot from findings and persists it to S3
+// CreateSnapshot reads findings directly from the store and persists a snapshot to S3.
+// This avoids passing large finding payloads through Temporal activity results,
+// which would exceed the 4MB gRPC message limit for large inventories (12K+ resources).
 func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInput) (*SnapshotResult, error) {
 	logger := activity.GetLogger(ctx)
-	logger.Info("Creating snapshot", "scanID", input.ScanID, "resourceTypeCount", len(input.FindingsByType))
+	logger.Info("Creating snapshot", "scanID", input.ScanID, "resourceTypeCount", len(input.ResourceTypes))
 
-	// Build snapshot
+	// Build snapshot by reading findings directly from the store per resource type
 	builder := snapshot.NewBuilder()
 	builder.WithScanTiming(input.ScanStartTime, input.ScanEndTime)
 
-	for resourceType, findings := range input.FindingsByType {
+	for _, resourceType := range input.ResourceTypes {
+		rt := resourceType
+		findings, err := a.Store.ListFindings(ctx, store.FindingFilters{
+			ResourceType: &rt,
+		})
+		if err != nil {
+			logger.Warn("Failed to retrieve findings for snapshot", "resourceType", resourceType, "error", err)
+			continue
+		}
+		logger.Info("Retrieved findings for snapshot", "resourceType", resourceType, "count", len(findings))
 		builder.AddFindings(resourceType, findings)
 	}
 
@@ -113,9 +101,6 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 func RegisterActivities(worker interface {
 	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
 }, activities *Activities) {
-	worker.RegisterActivityWithOptions(activities.RetrieveFindings, activity.RegisterOptions{
-		Name: RetrieveFindingsActivityName,
-	})
 	worker.RegisterActivityWithOptions(activities.CreateSnapshot, activity.RegisterOptions{
 		Name: CreateSnapshotActivityName,
 	})

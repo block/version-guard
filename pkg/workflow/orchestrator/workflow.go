@@ -108,7 +108,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 
 	// Wait for all child workflows to complete and collect results
 	resourceTypeResults := make(map[types.ResourceType]*ResourceTypeResult)
-	allFindings := make(map[types.ResourceType][]*types.Finding)
+	var successfulTypes []types.ResourceType
 
 	for resourceType, future := range futures {
 		var output detectionWorkflow.WorkflowOutput
@@ -136,27 +136,10 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		}
 
 		resourceTypeResults[resourceType] = result
-
-		// Retrieve findings from store for snapshot creation
-		var retrievedFindings []*types.Finding
-		err = workflow.ExecuteActivity(
-			workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-				StartToCloseTimeout: 2 * time.Minute,
-				RetryPolicy:         retryPolicy,
-			}),
-			RetrieveFindingsActivityName,
-			RetrieveFindingsInput{ResourceType: resourceType},
-		).Get(ctx, &retrievedFindings)
-
-		if err != nil {
-			logger.Warn("Failed to retrieve findings for snapshot", "resourceType", resourceType, "error", err)
-			continue
-		}
-
-		allFindings[resourceType] = retrievedFindings
+		successfulTypes = append(successfulTypes, resourceType)
 	}
 
-	logger.Info("Stage 1: Detect - All detection workflows completed", "successCount", len(allFindings))
+	logger.Info("Stage 1: Detect - All detection workflows completed", "successCount", len(successfulTypes))
 
 	// Stage 2: STORE - Create and persist snapshot to S3
 	logger.Info("Stage 2: Store - Creating snapshot")
@@ -169,10 +152,10 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		}),
 		CreateSnapshotActivityName,
 		CreateSnapshotInput{
-			ScanID:         input.ScanID,
-			FindingsByType: allFindings,
-			ScanStartTime:  startTime,
-			ScanEndTime:    workflow.Now(ctx),
+			ScanID:        input.ScanID,
+			ResourceTypes: successfulTypes,
+			ScanStartTime: startTime,
+			ScanEndTime:   workflow.Now(ctx),
 		},
 	).Get(ctx, &snapshotResult)
 
