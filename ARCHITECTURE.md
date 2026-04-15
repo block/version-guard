@@ -624,7 +624,21 @@ make run-locally  # One-shot
 ### Monitoring
 
 - **Metrics**: Expose Prometheus metrics from gRPC service
-- **Logs**: Structured JSON logging
+- **Logs**: Structured JSON logging via `log/slog`
+  - Machine-readable JSON format for log aggregation tools (Datadog, Splunk, CloudWatch Insights)
+  - Context-aware logging with typed fields for queryable log data
+  - Configurable log levels (Info/Debug via `--verbose` flag)
+  - All components (detectors, inventory sources, EOL providers) use structured logging
+  - Example log entry:
+    ```json
+    {
+      "time": "2024-01-15T10:30:45Z",
+      "level": "WARN",
+      "msg": "failed to parse resource from CSV row",
+      "row_number": 42,
+      "error": "missing ARN"
+    }
+    ```
 - **Alerts**: Based on RED/YELLOW finding counts
 - **Dashboards**: Query gRPC API for real-time data
 

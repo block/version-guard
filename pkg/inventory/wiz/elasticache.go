@@ -3,6 +3,7 @@ package wiz
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/block/Version-Guard/pkg/registry"
@@ -15,15 +16,20 @@ type ElastiCacheInventorySource struct {
 	reportID       string
 	registryClient registry.Client // Optional: for service attribution when tags are missing
 	tagConfig      *TagConfig      // Configurable tag key mappings
+	logger         *slog.Logger
 }
 
 // NewElastiCacheInventorySource creates a new Wiz-based ElastiCache inventory source with default tag configuration.
 // Use WithTagConfig() to customize tag key mappings.
-func NewElastiCacheInventorySource(client *Client, reportID string) *ElastiCacheInventorySource {
+func NewElastiCacheInventorySource(client *Client, reportID string, logger *slog.Logger) *ElastiCacheInventorySource {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &ElastiCacheInventorySource{
 		client:    client,
 		reportID:  reportID,
 		tagConfig: DefaultTagConfig(),
+		logger:    logger,
 	}
 }
 
@@ -70,6 +76,7 @@ func (s *ElastiCacheInventorySource) ListResources(ctx context.Context, resource
 			return isElastiCacheResource(cols.col(row, colHeaderNativeType))
 		},
 		s.parseElastiCacheRow,
+		s.logger,
 	)
 }
 

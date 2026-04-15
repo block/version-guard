@@ -146,6 +146,7 @@ func TestFullFlow_MultipleResourcesWithDifferentStatuses(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Execute: Run detection

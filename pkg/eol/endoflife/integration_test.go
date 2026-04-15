@@ -66,7 +66,7 @@ func TestProviderRealAPIIntegration(t *testing.T) {
 
 	// Create provider with real client
 	client := NewRealHTTPClient()
-	provider := NewProvider(client, 1*time.Hour)
+	provider := NewProvider(client, 1*time.Hour, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -124,7 +124,7 @@ func TestCachingRealAPI(t *testing.T) {
 	}
 
 	client := NewRealHTTPClient()
-	provider := NewProvider(client, 1*time.Hour)
+	provider := NewProvider(client, 1*time.Hour, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

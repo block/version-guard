@@ -3,6 +3,7 @@ package wiz
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -30,15 +31,20 @@ type EKSInventorySource struct {
 	reportID       string
 	registryClient registry.Client // Optional: for service attribution when tags are missing
 	tagConfig      *TagConfig      // Configurable tag key mappings
+	logger         *slog.Logger
 }
 
 // NewEKSInventorySource creates a new Wiz-based EKS inventory source with default tag configuration.
 // Use WithTagConfig() to customize tag key mappings.
-func NewEKSInventorySource(client *Client, reportID string) *EKSInventorySource {
+func NewEKSInventorySource(client *Client, reportID string, logger *slog.Logger) *EKSInventorySource {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &EKSInventorySource{
 		client:    client,
 		reportID:  reportID,
 		tagConfig: DefaultTagConfig(),
+		logger:    logger,
 	}
 }
 
@@ -85,6 +91,7 @@ func (s *EKSInventorySource) ListResources(ctx context.Context, resourceType typ
 			return isEKSResource(cols.col(row, colHeaderNativeType))
 		},
 		s.parseEKSRow,
+		s.logger,
 	)
 }
 

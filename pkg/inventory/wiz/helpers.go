@@ -3,7 +3,7 @@ package wiz
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -94,7 +94,11 @@ func parseWizReport(
 	requiredColumns []string,
 	filterRow rowFilterFunc,
 	parseRow rowParserFunc,
+	logger *slog.Logger,
 ) ([]*types.Resource, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	// Fetch report data
 	rows, err := client.GetReportData(ctx, reportID)
 	if err != nil {
@@ -128,8 +132,9 @@ func parseWizReport(
 		resource, err := parseRow(ctx, cols, row)
 		if err != nil {
 			// Log error but continue processing other rows
-			// TODO: wire through proper structured logger (e.g., *slog.Logger)
-			log.Printf("WARN: row %d: failed to parse resource: %v", i+1, err)
+			logger.WarnContext(ctx, "failed to parse resource from CSV row",
+				"row_number", i+1,
+				"error", err)
 			continue
 		}
 

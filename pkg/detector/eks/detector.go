@@ -2,7 +2,7 @@ package eks
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/pkg/errors"
@@ -18,6 +18,7 @@ type Detector struct {
 	inventory inventory.InventorySource
 	eol       eol.Provider
 	policy    policy.VersionPolicy
+	logger    *slog.Logger
 }
 
 // NewDetector creates a new EKS detector
@@ -25,11 +26,16 @@ func NewDetector(
 	inventory inventory.InventorySource,
 	eol eol.Provider,
 	policy policy.VersionPolicy,
+	logger *slog.Logger,
 ) *Detector {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Detector{
 		inventory: inventory,
 		eol:       eol,
 		policy:    policy,
+		logger:    logger,
 	}
 }
 
@@ -62,8 +68,9 @@ func (d *Detector) Detect(ctx context.Context) ([]*types.Finding, error) {
 		finding, err := d.detectResource(ctx, resource)
 		if err != nil {
 			// Log error but continue with other resources
-			// TODO: wire through proper structured logger (e.g., *slog.Logger)
-			log.Printf("WARN: failed to detect drift for %s: %v", resource.ID, err)
+			d.logger.WarnContext(ctx, "failed to detect drift for resource",
+				"resource_id", resource.ID,
+				"error", err)
 			continue
 		}
 

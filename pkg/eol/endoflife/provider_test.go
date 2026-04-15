@@ -45,7 +45,7 @@ func TestProvider_GetVersionLifecycle_PostgreSQL(t *testing.T) {
 		},
 	}
 
-	provider := NewProvider(mockClient, 1*time.Hour)
+	provider := NewProvider(mockClient, 1*time.Hour, nil)
 
 	tests := []struct {
 		name           string
@@ -148,7 +148,7 @@ func TestProvider_ListAllVersions(t *testing.T) {
 		},
 	}
 
-	provider := NewProvider(mockClient, 1*time.Hour)
+	provider := NewProvider(mockClient, 1*time.Hour, nil)
 
 	versions, err := provider.ListAllVersions(context.Background(), "postgres")
 	if err != nil {
@@ -187,7 +187,7 @@ func TestProvider_Caching(t *testing.T) {
 		},
 	}
 
-	provider := NewProvider(mockClient, 1*time.Hour)
+	provider := NewProvider(mockClient, 1*time.Hour, nil)
 
 	// First call - should hit API
 	_, err := provider.ListAllVersions(context.Background(), "postgres")
@@ -234,7 +234,7 @@ func TestProvider_CacheExpiration(t *testing.T) {
 	}
 
 	// Very short TTL for testing
-	provider := NewProvider(mockClient, 50*time.Millisecond)
+	provider := NewProvider(mockClient, 50*time.Millisecond, nil)
 
 	// First call
 	_, err := provider.ListAllVersions(context.Background(), "postgres")
@@ -260,7 +260,7 @@ func TestProvider_CacheExpiration(t *testing.T) {
 
 func TestProvider_UnsupportedEngine(t *testing.T) {
 	mockClient := &MockClient{}
-	provider := NewProvider(mockClient, 1*time.Hour)
+	provider := NewProvider(mockClient, 1*time.Hour, nil)
 
 	_, err := provider.GetVersionLifecycle(context.Background(), "unsupported-engine", "1.0")
 	if err == nil {
@@ -282,7 +282,7 @@ func TestProvider_VersionNotFound(t *testing.T) {
 		},
 	}
 
-	provider := NewProvider(mockClient, 1*time.Hour)
+	provider := NewProvider(mockClient, 1*time.Hour, nil)
 
 	lifecycle, err := provider.GetVersionLifecycle(context.Background(), "postgres", "99.99")
 	if err != nil {
@@ -302,14 +302,14 @@ func TestProvider_VersionNotFound(t *testing.T) {
 }
 
 func TestProvider_Name(t *testing.T) {
-	provider := NewProvider(&MockClient{}, 1*time.Hour)
+	provider := NewProvider(&MockClient{}, 1*time.Hour, nil)
 	if name := provider.Name(); name != "endoflife-date-api" {
 		t.Errorf("Name() = %s, want endoflife-date-api", name)
 	}
 }
 
 func TestProvider_Engines(t *testing.T) {
-	provider := NewProvider(&MockClient{}, 1*time.Hour)
+	provider := NewProvider(&MockClient{}, 1*time.Hour, nil)
 	engines := provider.Engines()
 
 	// Check that common engines are present
@@ -343,7 +343,7 @@ func TestProvider_EKS(t *testing.T) {
 		},
 	}
 
-	provider := NewProvider(mockClient, 1*time.Hour)
+	provider := NewProvider(mockClient, 1*time.Hour, nil)
 
 	engines := []string{"kubernetes", "k8s", "eks"}
 	for _, engine := range engines {
@@ -363,7 +363,7 @@ func TestProvider_EKS(t *testing.T) {
 }
 
 func TestConvertCycle_ExtendedSupport(t *testing.T) {
-	provider := NewProvider(&MockClient{}, 1*time.Hour)
+	provider := NewProvider(&MockClient{}, 1*time.Hour, nil)
 
 	tests := []struct {
 		name                    string
