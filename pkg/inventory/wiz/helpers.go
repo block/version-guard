@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
@@ -138,6 +139,68 @@ func parseWizReport(
 	}
 
 	return resources, nil
+}
+
+// extractServiceFromName attempts to extract service name from resource name.
+// Used as a fallback when service tags and registry lookups are unavailable.
+//
+// Example transformations:
+//   - "my-service-prod-cluster" → "my-service"
+//   - "payment-api-staging-db" → "payment-api"
+//   - "prod-cache" → "prod-cache" (no suffix found)
+//
+// Strategy: Split on hyphens and remove common environment/resource suffixes
+// from the end, then rejoin the remaining parts.
+func extractServiceFromName(name string) string {
+	parts := strings.Split(name, "-")
+	if len(parts) == 0 {
+		return name
+	}
+
+	// Scan from the end and find the first non-suffix part
+	// This handles cases like "cache-prod-valkey" correctly
+	endIdx := len(parts)
+	for i := len(parts) - 1; i >= 0; i-- {
+		if isEnvironmentSuffix(parts[i]) || isCommonSuffix(parts[i]) {
+			endIdx = i
+		} else {
+			// Found a non-suffix part, stop scanning
+			break
+		}
+	}
+
+	// If we removed everything or nothing meaningful remains, return original
+	if endIdx == 0 || endIdx == len(parts) {
+		return name
+	}
+
+	return strings.Join(parts[:endIdx], "-")
+}
+
+// isEnvironmentSuffix checks if a string is a common environment suffix.
+// Used by extractServiceFromName to identify non-service parts of resource names.
+func isEnvironmentSuffix(s string) bool {
+	s = strings.ToLower(s)
+	envs := []string{"dev", "development", "staging", "stage", "prod", "production", "test", "qa"}
+	for _, env := range envs {
+		if s == env {
+			return true
+		}
+	}
+	return false
+}
+
+// isCommonSuffix checks if a string is a common AWS resource type suffix.
+// Used by extractServiceFromName to identify non-service parts of resource names.
+func isCommonSuffix(s string) bool {
+	s = strings.ToLower(s)
+	suffixes := []string{"cluster", "db", "database", "rds", "aurora", "cache", "redis", "memcached", "valkey"}
+	for _, suffix := range suffixes {
+		if s == suffix {
+			return true
+		}
+	}
+	return false
 }
 
 // parseAWSResourceRow is a shared parser for Aurora and ElastiCache CSV rows.
