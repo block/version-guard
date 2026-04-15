@@ -48,14 +48,14 @@ func (ci columnIndex) require(row []string, name string) (string, error) {
 
 // Wiz CSV column header names used across all inventory sources.
 const (
-	colHeaderExternalID  = "externalId"
-	colHeaderName        = "name"
-	colHeaderNativeType  = "nativeType"
-	colHeaderAccountID   = "cloudAccount.externalId"
-	colHeaderVersion     = "versionDetails.version"
-	colHeaderRegion      = "region"
-	colHeaderTags        = "tags"
-	colHeaderEngineKind  = "typeFields.kind"
+	colHeaderExternalID = "externalId"
+	colHeaderName       = "name"
+	colHeaderNativeType = "nativeType"
+	colHeaderAccountID  = "cloudAccount.externalId"
+	colHeaderVersion    = "versionDetails.version"
+	colHeaderRegion     = "region"
+	colHeaderTags       = "tags"
+	colHeaderEngineKind = "typeFields.kind"
 )
 
 // rowFilterFunc decides whether a CSV row should be processed.

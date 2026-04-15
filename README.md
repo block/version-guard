@@ -98,7 +98,36 @@ make build-all
 ./bin/version-guard-cli --help
 ```
 
-### Run Locally
+### Run Locally (docker-compose)
+
+The easiest way to run Version Guard locally. This starts Temporal, MinIO (S3-compatible storage), and the Version Guard server in one command:
+
+```bash
+# With mock inventory (no Wiz credentials needed)
+docker compose up --build
+
+# With real Wiz inventory
+export WIZ_CLIENT_ID_SECRET="your-client-id"
+export WIZ_CLIENT_SECRET_SECRET="your-client-secret"
+export WIZ_EKS_REPORT_ID="your-report-id"
+export WIZ_AURORA_REPORT_ID="your-report-id"
+export WIZ_ELASTICACHE_REPORT_ID="your-report-id"
+docker compose up --build
+```
+
+**Services started:**
+
+| Service | Purpose | Port |
+|---------|---------|------|
+| `temporal` | Workflow orchestration | `7233` (gRPC), `8233` (Web UI) |
+| `minio` | S3-compatible snapshot storage | `9000` (API), `9001` (Console) |
+| `version-guard` | The server | `8080` (gRPC) |
+
+Once running, open the Temporal Web UI at http://localhost:8233 to trigger and monitor workflows.
+
+### Run Locally (manual)
+
+If you prefer running components individually:
 
 1. **Start local Temporal server:**
 ```bash
@@ -118,7 +147,8 @@ export WIZ_AURORA_REPORT_ID="your-report-id"
 make dev
 ```
 
-3. **Trigger a scan:**
+### Trigger a Scan
+
 ```bash
 # Via Temporal CLI
 temporal workflow start \
@@ -126,11 +156,11 @@ temporal workflow start \
   --type VersionGuardOrchestratorWorkflow \
   --input '{}'
 
-# Via Temporal Web UI
-# Navigate to http://localhost:8233 → Start Workflow
+# Or via the Temporal Web UI at http://localhost:8233 → Start Workflow
 ```
 
-4. **Query findings:**
+### Query Findings
+
 ```bash
 # Using gRPC
 grpcurl -plaintext localhost:8080 list
