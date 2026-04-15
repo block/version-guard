@@ -248,12 +248,20 @@ func (p *DefaultPolicy) getYellowRecommendation(resource *types.Resource, lifecy
 
 // versionMatches checks if a resource version matches a lifecycle version.
 // endoflife.date uses major.minor cycles (e.g., "8.0") while resources may have
-// full versions (e.g., "8.0.35").
+// full versions (e.g., "8.0.35") or prefixed versions (e.g., "k8s-1.33").
 func versionMatches(lifecycleVersion, resourceVersion string) bool {
 	if lifecycleVersion == resourceVersion {
 		return true
 	}
-	return strings.HasPrefix(resourceVersion, lifecycleVersion+".")
+	// Strip common prefixes for comparison
+	normalized := resourceVersion
+	for _, prefix := range []string{"k8s-", "kubernetes-"} {
+		normalized = strings.TrimPrefix(normalized, prefix)
+	}
+	if lifecycleVersion == normalized {
+		return true
+	}
+	return strings.HasPrefix(normalized, lifecycleVersion+".")
 }
 
 // getSuggestedVersion returns a suggested version based on engine type

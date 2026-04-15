@@ -2,7 +2,6 @@ package endoflife
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -329,35 +328,37 @@ func TestProvider_Engines(t *testing.T) {
 	}
 }
 
-func TestProvider_BlocksNonStandardSchema(t *testing.T) {
-	// EKS/kubernetes should be blocked because it uses non-standard endoflife.date schema
-	// where cycle.EOL means "end of standard support" NOT "true EOL"
+func TestProvider_EKS(t *testing.T) {
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
-			// This should never be called because the guard should reject it first
-			t.Error("GetProductCycles should not be called for blocked products")
-			return nil, nil
+			if product != "amazon-eks" {
+				t.Errorf("Expected product amazon-eks, got %s", product)
+			}
+			return []*ProductCycle{
+				{
+					Cycle:           "1.32",
+					ReleaseDate:     "2024-11-19",
+					EOL:             "2026-12-19",
+					ExtendedSupport: "2027-12-19",
+				},
+			}, nil
 		},
 	}
 
 	provider := NewProvider(mockClient, 1*time.Hour)
 
-	// Test that all EKS-related engine names are blocked
-	blockedEngines := []string{"kubernetes", "k8s", "eks"}
-	for _, engine := range blockedEngines {
+	engines := []string{"kubernetes", "k8s", "eks"}
+	for _, engine := range engines {
 		t.Run(engine, func(t *testing.T) {
-			_, err := provider.ListAllVersions(context.Background(), engine)
-			if err == nil {
-				t.Errorf("Expected error for %s (non-standard schema), got nil", engine)
+			versions, err := provider.ListAllVersions(context.Background(), engine)
+			if err != nil {
+				t.Fatalf("Unexpected error for %s: %v", engine, err)
 			}
-			if err != nil && !strings.Contains(err.Error(), "non-standard") {
-				t.Errorf("Error should mention 'non-standard schema', got: %v", err)
+			if len(versions) != 1 {
+				t.Fatalf("Expected 1 version, got %d", len(versions))
 			}
-
-			// GetVersionLifecycle should also be blocked
-			_, err = provider.GetVersionLifecycle(context.Background(), engine, "1.35")
-			if err == nil {
-				t.Errorf("Expected error for %s in GetVersionLifecycle, got nil", engine)
+			if versions[0].Version != "1.32" {
+				t.Errorf("Expected version 1.32, got %s", versions[0].Version)
 			}
 		})
 	}

@@ -23,9 +23,6 @@ import (
 // and MUST use dedicated providers (e.g., EKSEOLProvider) instead of this generic provider.
 // These products are listed here but blocked by ProductsWithNonStandardSchema below.
 var ProductMapping = map[string]string{
-	// EKS entries are mapped but BLOCKED by ProductsWithNonStandardSchema
-	// because EKS uses non-standard schema where cycle.EOL means "end of standard support"
-	// not "true end of life". Use pkg/eol/aws.EKSEOLProvider instead.
 	"kubernetes": "amazon-eks",
 	"k8s":        "amazon-eks",
 	"eks":        "amazon-eks",
@@ -33,20 +30,24 @@ var ProductMapping = map[string]string{
 	"postgres":           "amazon-rds-postgresql",
 	"postgresql":         "amazon-rds-postgresql",
 	"mysql":              "amazon-rds-mysql",
-	"aurora-mysql":       "amazon-rds-mysql",
-	"aurora-postgresql":  "amazon-rds-postgresql",
+	"aurora-postgresql":  "amazon-aurora-postgresql",
 	"redis":              "amazon-elasticache-redis",
 	"elasticache-redis":  "amazon-elasticache-redis",
 	"valkey":             "valkey",
 	"elasticache-valkey": "valkey",
+	// Note: aurora-mysql is NOT mapped because endoflife.date has no
+	// amazon-aurora-mysql product. Aurora MySQL uses its own 3.x versioning
+	// that doesn't match amazon-rds-mysql cycles (8.0, 5.7). Needs AWS RDS API.
 }
 
 // ProductsWithNonStandardSchema lists products that MUST NOT use this generic provider
 // because they use non-standard field semantics on endoflife.date.
 // The provider will return an error if these products are requested.
-var ProductsWithNonStandardSchema = []string{
-	"amazon-eks", // cycle.EOL = end of standard support (NOT true EOL!)
-}
+//
+// Note on EKS: endoflife.date's "eol" field for EKS means end of standard support
+// (not true EOL), and "extendedSupport" is the true EOL. This is handled correctly
+// by convertCycle which maps eol→EOLDate and extendedSupport→ExtendedSupportEnd.
+var ProductsWithNonStandardSchema = []string{}
 
 const (
 	providerName = "endoflife-date-api"
