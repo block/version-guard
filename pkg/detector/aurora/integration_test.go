@@ -154,6 +154,7 @@ func TestFullFlow_MultipleResourcesWithDifferentStatuses(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Execute: Run the full detection flow
@@ -368,7 +369,7 @@ func TestFullFlow_SummaryStatistics(t *testing.T) {
 		},
 	}
 
-	detector := NewDetector(mockInventory, mockEOL, policy.NewDefaultPolicy())
+	detector := NewDetector(mockInventory, mockEOL, policy.NewDefaultPolicy(), nil)
 	findings, err := detector.Detect(context.Background())
 
 	if err != nil {

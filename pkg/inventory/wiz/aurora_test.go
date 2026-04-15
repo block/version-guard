@@ -43,7 +43,7 @@ func TestAuroraInventorySource_ListResources_Success(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	// Execute: List Aurora resources
 	resources, err := source.ListResources(ctx, types.ResourceTypeAurora)
@@ -110,7 +110,7 @@ func TestAuroraInventorySource_ListResources_EmptyReport(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.EmptyCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "empty-report-id")
+	source := NewAuroraInventorySource(client, "empty-report-id", nil)
 
 	// Execute: List resources from empty report (only header row)
 	resources, err := source.ListResources(ctx, types.ResourceTypeAurora)
@@ -127,7 +127,7 @@ func TestAuroraInventorySource_ListResources_UnsupportedResourceType(t *testing.
 
 	mockWizClient := new(MockWizClient)
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	// Execute: Request unsupported resource type
 	_, err := source.ListResources(ctx, types.ResourceTypeElastiCache)
@@ -148,7 +148,7 @@ func TestAuroraInventorySource_GetResource_Found(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	// Execute: Get specific resource by ARN
 	resource, err := source.GetResource(ctx, types.ResourceTypeAurora,
@@ -174,7 +174,7 @@ func TestAuroraInventorySource_GetResource_NotFound(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	// Execute: Get non-existent resource
 	_, err := source.GetResource(ctx, types.ResourceTypeAurora,
@@ -190,7 +190,7 @@ func TestAuroraInventorySource_GetResource_NotFound(t *testing.T) {
 func TestAuroraInventorySource_Name(t *testing.T) {
 	mockWizClient := new(MockWizClient)
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	assert.Equal(t, "wiz-aurora", source.Name())
 }
@@ -198,7 +198,7 @@ func TestAuroraInventorySource_Name(t *testing.T) {
 func TestAuroraInventorySource_CloudProvider(t *testing.T) {
 	mockWizClient := new(MockWizClient)
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	assert.Equal(t, types.CloudProviderAWS, source.CloudProvider())
 }
@@ -214,7 +214,7 @@ func TestParseAuroraRow_ServiceExtraction(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 
 	resources, err := source.ListResources(context.Background(), types.ResourceTypeAurora)
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ arn:aws:rds:us-west-2:999888777666:cluster:untagged-cluster,untagged-cluster,rds
 	}
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id").WithRegistryClient(mockRegistry)
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil).WithRegistryClient(mockRegistry)
 
 	// Execute: List resources
 	resources, err := source.ListResources(ctx, types.ResourceTypeAurora)
@@ -296,7 +296,7 @@ arn:aws:rds:us-east-1:888777666555:cluster:tagged-cluster,tagged-cluster,rds/Ama
 	}
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id").WithRegistryClient(mockRegistry)
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil).WithRegistryClient(mockRegistry)
 
 	// Execute: List resources
 	resources, err := source.ListResources(ctx, types.ResourceTypeAurora)
@@ -328,7 +328,7 @@ arn:aws:rds:eu-west-1:777666555444:cluster:my-service-cluster,my-service-cluster
 
 	// NO registry client configured
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewAuroraInventorySource(client, "aurora-report-id")
+	source := NewAuroraInventorySource(client, "aurora-report-id", nil)
 	// Note: Not calling WithRegistryClient()
 
 	// Execute: List resources

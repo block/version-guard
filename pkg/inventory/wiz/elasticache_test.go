@@ -23,7 +23,7 @@ func TestElastiCacheInventorySource_ListResources_Success(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.ElastiCacheCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	resources, err := source.ListResources(ctx, types.ResourceTypeElastiCache)
 
@@ -88,7 +88,7 @@ func TestElastiCacheInventorySource_ListResources_EmptyReport(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.EmptyCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "empty-report-id")
+	source := NewElastiCacheInventorySource(client, "empty-report-id", nil)
 
 	resources, err := source.ListResources(ctx, types.ResourceTypeElastiCache)
 
@@ -103,7 +103,7 @@ func TestElastiCacheInventorySource_ListResources_UnsupportedResourceType(t *tes
 
 	mockWizClient := new(MockWizClient)
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	_, err := source.ListResources(ctx, types.ResourceTypeAurora)
 
@@ -122,7 +122,7 @@ func TestElastiCacheInventorySource_GetResource_Found(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.ElastiCacheCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	resource, err := source.GetResource(ctx, types.ResourceTypeElastiCache,
 		"arn:aws:elasticache:us-east-1:123456789012:cluster:legacy-redis-001")
@@ -146,7 +146,7 @@ func TestElastiCacheInventorySource_GetResource_NotFound(t *testing.T) {
 		Return(NewMockReadCloser(WizAPIFixtures.ElastiCacheCSVData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	_, err := source.GetResource(ctx, types.ResourceTypeElastiCache,
 		"arn:aws:elasticache:us-west-2:999999999999:cluster:non-existent")
@@ -160,7 +160,7 @@ func TestElastiCacheInventorySource_GetResource_NotFound(t *testing.T) {
 func TestElastiCacheInventorySource_Name(t *testing.T) {
 	mockWizClient := new(MockWizClient)
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	assert.Equal(t, "wiz-elasticache", source.Name())
 }
@@ -168,7 +168,7 @@ func TestElastiCacheInventorySource_Name(t *testing.T) {
 func TestElastiCacheInventorySource_CloudProvider(t *testing.T) {
 	mockWizClient := new(MockWizClient)
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	assert.Equal(t, types.CloudProviderAWS, source.CloudProvider())
 }
@@ -190,7 +190,7 @@ arn:aws:elasticache:us-west-2:123456789012:user:default,default,elasticache#user
 		Return(NewMockReadCloser(csvData), nil)
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id")
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil)
 
 	resources, err := source.ListResources(ctx, types.ResourceTypeElastiCache)
 
@@ -221,7 +221,7 @@ arn:aws:elasticache:us-west-2:999888777666:cluster:untagged-redis-001,untagged-r
 	}
 
 	client := NewClient(mockWizClient, time.Hour)
-	source := NewElastiCacheInventorySource(client, "elasticache-report-id").WithRegistryClient(mockRegistry)
+	source := NewElastiCacheInventorySource(client, "elasticache-report-id", nil).WithRegistryClient(mockRegistry)
 
 	resources, err := source.ListResources(ctx, types.ResourceTypeElastiCache)
 

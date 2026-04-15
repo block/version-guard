@@ -3,6 +3,7 @@ package endoflife
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,7 @@ type Provider struct {
 	client   Client
 	cacheTTL time.Duration
 	group    singleflight.Group // Prevents thundering herd on API calls
+	logger   *slog.Logger
 }
 
 //nolint:govet // field alignment sacrificed for readability
@@ -71,15 +73,19 @@ type cachedVersions struct {
 }
 
 // NewProvider creates a new endoflife.date EOL provider
-func NewProvider(client Client, cacheTTL time.Duration) *Provider {
+func NewProvider(client Client, cacheTTL time.Duration, logger *slog.Logger) *Provider {
 	if cacheTTL == 0 {
 		cacheTTL = 24 * time.Hour // Default: cache for 24 hours
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	return &Provider{
 		client:   client,
 		cacheTTL: cacheTTL,
 		cache:    make(map[string]*cachedVersions),
+		logger:   logger,
 	}
 }
 
@@ -191,7 +197,10 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 			lifecycle, err := p.convertCycle(engine, product, cycle)
 			if err != nil {
 				// Skip cycles we can't parse, but log a warning
-				// TODO: wire through proper structured logger
+				p.logger.WarnContext(ctx, "failed to convert EOL cycle, skipping",
+					"engine", engine,
+					"product", product,
+					"error", err)
 				continue
 			}
 			versions = append(versions, lifecycle)

@@ -3,6 +3,7 @@ package aurora
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/pkg/errors"
@@ -18,6 +19,7 @@ type Detector struct {
 	inventory inventory.InventorySource
 	eol       eol.Provider
 	policy    policy.VersionPolicy
+	logger    *slog.Logger
 }
 
 // NewDetector creates a new Aurora detector
@@ -25,11 +27,16 @@ func NewDetector(
 	inventory inventory.InventorySource,
 	eol eol.Provider,
 	policy policy.VersionPolicy,
+	logger *slog.Logger,
 ) *Detector {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Detector{
 		inventory: inventory,
 		eol:       eol,
 		policy:    policy,
+		logger:    logger,
 	}
 }
 

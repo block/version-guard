@@ -49,6 +49,7 @@ func TestDetector_Detect_EOLVersion(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Run detection
@@ -119,6 +120,7 @@ func TestDetector_Detect_CurrentVersion(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Run detection
@@ -176,6 +178,7 @@ func TestDetector_Detect_ExtendedSupport(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Run detection
@@ -257,6 +260,7 @@ func TestDetector_Detect_MultipleResources(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Run detection
@@ -311,6 +315,7 @@ func TestDetector_Detect_EmptyInventory(t *testing.T) {
 		mockInventory,
 		mockEOL,
 		policy.NewDefaultPolicy(),
+		nil, // logger
 	)
 
 	// Run detection
@@ -327,7 +332,7 @@ func TestDetector_Detect_EmptyInventory(t *testing.T) {
 }
 
 func TestDetector_Name(t *testing.T) {
-	detector := NewDetector(nil, nil, nil)
+	detector := NewDetector(nil, nil, nil, nil)
 
 	name := detector.Name()
 	expected := "aurora-detector"
@@ -338,7 +343,7 @@ func TestDetector_Name(t *testing.T) {
 }
 
 func TestDetector_ResourceType(t *testing.T) {
-	detector := NewDetector(nil, nil, nil)
+	detector := NewDetector(nil, nil, nil, nil)
 
 	resourceType := detector.ResourceType()
 

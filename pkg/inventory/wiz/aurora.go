@@ -3,6 +3,7 @@ package wiz
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/block/Version-Guard/pkg/registry"
@@ -30,15 +31,20 @@ type AuroraInventorySource struct {
 	reportID       string
 	registryClient registry.Client // Optional: for service attribution when tags are missing
 	tagConfig      *TagConfig      // Configurable tag key mappings
+	logger         *slog.Logger
 }
 
 // NewAuroraInventorySource creates a new Wiz-based Aurora inventory source with default tag configuration.
 // Use WithTagConfig() to customize tag key mappings.
-func NewAuroraInventorySource(client *Client, reportID string) *AuroraInventorySource {
+func NewAuroraInventorySource(client *Client, reportID string, logger *slog.Logger) *AuroraInventorySource {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &AuroraInventorySource{
 		client:    client,
 		reportID:  reportID,
 		tagConfig: DefaultTagConfig(),
+		logger:    logger,
 	}
 }
 
@@ -85,6 +91,7 @@ func (s *AuroraInventorySource) ListResources(ctx context.Context, resourceType 
 			return isAuroraResource(cols.col(row, colHeaderNativeType))
 		},
 		s.parseAuroraRow,
+		s.logger,
 	)
 }
 

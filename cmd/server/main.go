@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -99,6 +100,16 @@ func (s *ServerCLI) buildTagConfig() *wiz.TagConfig {
 }
 
 func (s *ServerCLI) Run(_ *kong.Context) error {
+	// Initialize structured logger
+	logLevel := slog.LevelInfo
+	if s.Verbose {
+		logLevel = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
+
 	fmt.Println("Starting Version Guard Detector Service (Open Source)")
 	fmt.Printf("  Version: %s\n", version)
 	fmt.Printf("  Temporal Endpoint: %s\n", s.TemporalEndpoint)
@@ -184,17 +195,17 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		wizClient := wiz.NewClient(wizHTTPClient, time.Duration(s.WizCacheTTLHours)*time.Hour)
 
 		if s.WizAuroraReportID != "" {
-			invSources[types.ResourceTypeAurora] = wiz.NewAuroraInventorySource(wizClient, s.WizAuroraReportID).
+			invSources[types.ResourceTypeAurora] = wiz.NewAuroraInventorySource(wizClient, s.WizAuroraReportID, logger).
 				WithTagConfig(tagConfig)
 			fmt.Println("✓ Aurora inventory source configured (Wiz)")
 		}
 		if s.WizElastiCacheReportID != "" {
-			invSources[types.ResourceTypeElastiCache] = wiz.NewElastiCacheInventorySource(wizClient, s.WizElastiCacheReportID).
+			invSources[types.ResourceTypeElastiCache] = wiz.NewElastiCacheInventorySource(wizClient, s.WizElastiCacheReportID, logger).
 				WithTagConfig(tagConfig)
 			fmt.Println("✓ ElastiCache inventory source configured (Wiz)")
 		}
 		if s.WizEKSReportID != "" {
-			invSources[types.ResourceTypeEKS] = wiz.NewEKSInventorySource(wizClient, s.WizEKSReportID).
+			invSources[types.ResourceTypeEKS] = wiz.NewEKSInventorySource(wizClient, s.WizEKSReportID, logger).
 				WithTagConfig(tagConfig)
 			fmt.Println("✓ EKS inventory source configured (Wiz)")
 		}
@@ -240,15 +251,15 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	cacheTTL := 24 * time.Hour
 
 	// Aurora EOL provider (using endoflife.date for PostgreSQL versions)
-	eolProviders[types.ResourceTypeAurora] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL)
+	eolProviders[types.ResourceTypeAurora] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
 	fmt.Println("✓ Aurora EOL provider configured (endoflife.date API)")
 
 	// EKS EOL provider (using endoflife.date for Kubernetes versions)
-	eolProviders[types.ResourceTypeEKS] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL)
+	eolProviders[types.ResourceTypeEKS] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
 	fmt.Println("✓ EKS EOL provider configured (endoflife.date API)")
 
 	// ElastiCache EOL provider
-	eolProviders[types.ResourceTypeElastiCache] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL)
+	eolProviders[types.ResourceTypeElastiCache] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
 	fmt.Println("✓ ElastiCache EOL provider configured (endoflife.date API)")
 
 	// Initialize policy engine
@@ -261,6 +272,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 			invSources[types.ResourceTypeAurora],
 			eolProviders[types.ResourceTypeAurora],
 			policyEngine,
+			logger,
 		)
 		fmt.Println("✓ Aurora detector initialized")
 	}
@@ -271,6 +283,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 			invSources[types.ResourceTypeEKS],
 			eolProviders[types.ResourceTypeEKS],
 			policyEngine,
+			logger,
 		)
 		fmt.Println("✓ EKS detector initialized")
 	}
