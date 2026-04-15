@@ -45,9 +45,8 @@ Version Guard implements a **two-stage detection pipeline**:
 ```
 
 **Key Components:**
-- **Inventory Sources**: Wiz (multi-cloud scanning), mock sources for testing
-- **EOL Providers**: AWS APIs (RDS, EKS) + endoflife.date (fallback)
-- **Detectors**: Resource-specific detection logic (Aurora, EKS currently implemented)
+- **Inventory Sources**: [Wiz](https://wiz.io) saved reports for resource discovery (multi-cloud)
+- **EOL Data**: [endoflife.date](https://endoflife.date) API — no cloud provider credentials needed
 - **Classification**: Red (EOL/deprecated), Yellow (extended support/approaching EOL), Green (current)
 - **S3 Snapshots**: Versioned JSON storage for audit trail and downstream consumption
 - **gRPC API**: Query interface for compliance dashboards
@@ -55,34 +54,36 @@ Version Guard implements a **two-stage detection pipeline**:
 ## ✨ Features
 
 - ✅ **Multi-Cloud Inventory**: Wiz integration for AWS, GCP, Azure resource discovery
-- ✅ **Hybrid EOL Data**: AWS native APIs + endoflife.date for comprehensive coverage
+- ✅ **Open EOL Data**: All EOL data from [endoflife.date](https://endoflife.date) — no cloud provider credentials needed
 - ✅ **Parallel Detection**: Temporal-based workflows for scalable scanning
 - ✅ **Versioned Snapshots**: S3 storage with full audit history
-- ✅ **gRPC Query API**: 3 endpoints for compliance scoring, finding details, fleet summaries
+- ✅ **Local Development**: Full docker-compose setup with MinIO (S3) and Temporal
 - ✅ **Extensible Architecture**: Plugin your own emitters for issue tracking, dashboards, notifications
 
 ## 📦 Supported Resources
 
-Currently implemented:
-- **Aurora** (RDS MySQL/PostgreSQL) - AWS RDS EOL API + Wiz inventory
-- **EKS** (Kubernetes) - AWS EKS API + endoflife.date (hybrid) + Wiz inventory
+| Resource | Inventory | EOL Source | Code | Status |
+|----------|-----------|------------|------|--------|
+| **EKS** (Kubernetes) | Wiz | [amazon-eks](https://endoflife.date/amazon-eks) | ✅ Implemented | ✅ Working |
+| **ElastiCache** (Redis/Valkey) | Wiz | [amazon-elasticache-redis](https://endoflife.date/amazon-elasticache-redis), [valkey](https://endoflife.date/valkey) | ✅ Implemented | ✅ Working |
+| **Aurora PostgreSQL** | Wiz | [amazon-aurora-postgresql](https://endoflife.date/amazon-aurora-postgresql) | ✅ Implemented | 🔜 Needs Wiz report with PostgreSQL data |
+| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ✅ Implemented | 🔜 EOL data pending [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) |
+| **RDS MySQL** | — | [amazon-rds-mysql](https://endoflife.date/amazon-rds-mysql) | ❌ Needs Wiz report | 📋 Planned |
+| **RDS PostgreSQL** | — | [amazon-rds-postgresql](https://endoflife.date/amazon-rds-postgresql) | ❌ Needs Wiz report | 📋 Planned |
+| **OpenSearch** | — | [amazon-opensearch](https://endoflife.date/amazon-opensearch) | ❌ Needs Wiz report | 📋 Planned |
+| **Lambda** | — | [aws-lambda](https://endoflife.date/aws-lambda) | ❌ Needs Wiz report | 📋 Planned |
 
-Easily extensible to:
-- ElastiCache (Redis/Valkey/Memcached)
-- OpenSearch
-- Lambda (Node.js, Python, Java)
-- Cloud SQL (GCP)
-- GKE (GCP)
-- Azure resources
+Adding a new resource type requires:
+1. A Wiz saved report + inventory source (~100 lines)
+2. One line in `ProductMapping` to map the engine name to endoflife.date
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - **Go 1.24+**
-- **Docker** (for local Temporal server)
-- **AWS credentials** (for EOL APIs - optional but recommended)
-- **Wiz API access** (optional - falls back to mock data)
+- **Docker** (for docker-compose local setup)
+- **Wiz API access** (optional — falls back to mock data)
 
 ### Installation
 
@@ -150,11 +151,13 @@ make dev
 ### Trigger a Scan
 
 ```bash
-# Via Temporal CLI
-temporal workflow start \
+# Via Temporal CLI (from inside the temporal container if using docker-compose)
+docker compose exec temporal temporal workflow start \
   --task-queue version-guard-detection \
-  --type VersionGuardOrchestratorWorkflow \
-  --input '{}'
+  --type OrchestratorWorkflow \
+  --input '{}' \
+  --address localhost:7233 \
+  --namespace version-guard-dev
 
 # Or via the Temporal Web UI at http://localhost:8233 → Start Workflow
 ```
@@ -196,7 +199,7 @@ Version Guard is configured via environment variables or CLI flags:
 | `TEMPORAL_NAMESPACE` | Temporal namespace | `version-guard-dev` |
 | `GRPC_PORT` | gRPC service port | `8080` |
 | `S3_BUCKET` | S3 bucket for snapshots | `version-guard-snapshots` |
-| `AWS_REGION` | AWS region for EOL APIs | `us-west-2` |
+| `AWS_REGION` | AWS region (for S3 snapshots) | `us-west-2` |
 | `WIZ_CLIENT_ID_SECRET` | Wiz client ID (optional) | - |
 | `WIZ_CLIENT_SECRET_SECRET` | Wiz client secret (optional) | - |
 | `TAG_APP_KEYS` | Comma-separated AWS tag keys for app/service | `app,application,service` |
@@ -338,8 +341,7 @@ Version Guard is maintained by Block, Inc. and the open-source community.
 Special thanks to:
 - [Temporal](https://temporal.io) for the workflow orchestration framework
 - [Wiz](https://wiz.io) for multi-cloud security scanning
-- [endoflife.date](https://endoflife.date) for EOL data API
-- AWS for native EOL APIs (RDS, EKS)
+- [endoflife.date](https://endoflife.date) for open EOL data
 
 ---
 
