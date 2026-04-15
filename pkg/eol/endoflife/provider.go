@@ -26,10 +26,10 @@ var ProductMapping = map[string]string{
 	"aurora-postgresql": "amazon-aurora-postgresql",
 	// TODO(endoflife.date#9534): aurora-mysql → amazon-aurora-mysql once the
 	// endoflife.date PR is merged. Until then, aurora-mysql returns UNKNOWN.
-	"aurora-mysql":      "amazon-aurora-mysql",
-	"redis":             "amazon-elasticache-redis",
-	"elasticache-redis": "amazon-elasticache-redis",
-	"valkey":            "valkey",
+	"aurora-mysql":       "amazon-aurora-mysql",
+	"redis":              "amazon-elasticache-redis",
+	"elasticache-redis":  "amazon-elasticache-redis",
+	"valkey":             "valkey",
 	"elasticache-valkey": "valkey",
 }
 
@@ -346,11 +346,8 @@ func normalizeVersion(engine, version string) string {
 // anyToDateString extracts a date string from an any-typed field.
 // endoflife.date returns EOL/Support as either a date string or a boolean.
 func anyToDateString(v any) string {
-	switch val := v.(type) {
-	case string:
-		if val != "" && val != "false" && val != "true" {
-			return val
-		}
+	if val, ok := v.(string); ok && val != "" && val != "false" && val != "true" {
+		return val
 	}
 	return ""
 }
