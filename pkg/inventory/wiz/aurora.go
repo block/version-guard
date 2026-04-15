@@ -13,20 +13,18 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
-// Wiz CSV column indices for Aurora/RDS resources
-// These match the saved report with columns:
-// externalId, name, nativeType, cloudAccount.externalId, versionDetails.version, region, tags, typeFields.kind
-const (
-	colARN           = 0 // externalId (ARN)
-	colResourceName  = 1 // name
-	colNativeType    = 2 // nativeType (e.g., "rds/AmazonAuroraMySQL/cluster")
-	colAWSAccountID  = 3 // cloudAccount.externalId
-	colEngineVersion = 4 // versionDetails.version
-	colRegion        = 5 // region
-	colTags          = 6 // tags JSON
-	colEngineKind    = 7 // typeFields.kind (e.g., "AmazonAuroraMySQL")
-	colMinRequired   = 8 // minimum number of columns expected
-)
+// auroraRequiredColumns lists the CSV header names that must be present
+// in a Wiz Aurora/RDS saved report.
+var auroraRequiredColumns = []string{
+	colHeaderExternalID,
+	colHeaderName,
+	colHeaderNativeType,
+	colHeaderAccountID,
+	colHeaderVersion,
+	colHeaderRegion,
+	colHeaderTags,
+	colHeaderEngineKind,
+}
 
 // AuroraInventorySource fetches Aurora/RDS cluster inventory from Wiz saved reports
 //
@@ -85,10 +83,10 @@ func (s *AuroraInventorySource) ListResources(ctx context.Context, resourceType 
 		ctx,
 		s.client,
 		s.reportID,
-		colMinRequired, // Minimum required columns
-		func(row []string) bool {
+		auroraRequiredColumns,
+		func(cols columnIndex, row []string) bool {
 			// Filter for Aurora clusters only
-			return isAuroraResource(row[colNativeType])
+			return isAuroraResource(cols.col(row, colHeaderNativeType))
 		},
 		s.parseAuroraRow,
 	)
@@ -113,9 +111,9 @@ func (s *AuroraInventorySource) GetResource(ctx context.Context, resourceType ty
 }
 
 // parseAuroraRow parses a single CSV row into a Resource
-func (s *AuroraInventorySource) parseAuroraRow(ctx context.Context, row []string) (*types.Resource, error) {
-	resourceARN := row[colARN]
-	if resourceARN == "" {
+func (s *AuroraInventorySource) parseAuroraRow(ctx context.Context, cols columnIndex, row []string) (*types.Resource, error) {
+	resourceARN, err := cols.require(row, colHeaderExternalID)
+	if err != nil {
 		return nil, fmt.Errorf("missing ARN")
 	}
 
@@ -126,18 +124,18 @@ func (s *AuroraInventorySource) parseAuroraRow(ctx context.Context, row []string
 	}
 
 	// Extract metadata
-	resourceName := row[colResourceName]
-	accountID := row[colAWSAccountID]
+	resourceName := cols.col(row, colHeaderName)
+	accountID := cols.col(row, colHeaderAccountID)
 	if accountID == "" {
 		accountID = parsedARN.AccountID
 	}
 
-	engine := normalizeEngineKind(row[colEngineKind])
-	version := row[colEngineVersion]
-	region := row[colRegion]
+	engine := normalizeEngineKind(cols.col(row, colHeaderEngineKind))
+	version := cols.col(row, colHeaderVersion)
+	region := cols.col(row, colHeaderRegion)
 
 	// Parse tags
-	tagsJSON := row[colTags]
+	tagsJSON := cols.col(row, colHeaderTags)
 	tags, err := ParseTags(tagsJSON)
 	if err != nil {
 		// Non-fatal, just use empty tags

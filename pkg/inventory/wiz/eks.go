@@ -10,18 +10,17 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
-// Wiz CSV column indices for EKS clusters
-// This report uses a different format than the Aurora report
-const (
-	colEKSExternalID     = 0 // External ID (hash of cluster ID)
-	colEKSName           = 1 // Cluster name
-	colEKSNativeType     = 2 // Native type (should be "cluster")
-	colEKSAccountID      = 3 // cloudAccount.externalId (AWS Account ID)
-	colEKSVersion        = 4 // versionDetails.version (Kubernetes version)
-	colEKSRegion         = 5 // region
-	colEKSTags           = 6 // tags (JSON)
-	colEKSTypeFieldsKind = 7 // typeFields.kind
-)
+// eksRequiredColumns lists the CSV header names that must be present
+// in a Wiz EKS saved report.
+var eksRequiredColumns = []string{
+	colHeaderExternalID,
+	colHeaderName,
+	colHeaderNativeType,
+	colHeaderAccountID,
+	colHeaderVersion,
+	colHeaderRegion,
+	colHeaderTags,
+}
 
 // EKSInventorySource fetches EKS cluster inventory from Wiz saved reports
 //
@@ -80,10 +79,10 @@ func (s *EKSInventorySource) ListResources(ctx context.Context, resourceType typ
 		ctx,
 		s.client,
 		s.reportID,
-		colEKSTypeFieldsKind+1, // Minimum required columns
-		func(row []string) bool {
+		eksRequiredColumns,
+		func(cols columnIndex, row []string) bool {
 			// Filter for EKS clusters - nativeType should be "cluster"
-			return isEKSResource(row[colEKSNativeType])
+			return isEKSResource(cols.col(row, colHeaderNativeType))
 		},
 		s.parseEKSRow,
 	)
@@ -108,31 +107,31 @@ func (s *EKSInventorySource) GetResource(ctx context.Context, resourceType types
 }
 
 // parseEKSRow parses a single CSV row into a Resource
-func (s *EKSInventorySource) parseEKSRow(ctx context.Context, row []string) (*types.Resource, error) {
+func (s *EKSInventorySource) parseEKSRow(ctx context.Context, cols columnIndex, row []string) (*types.Resource, error) {
 	// Extract basic fields
-	externalID := row[colEKSExternalID]
-	if externalID == "" {
+	externalID, err := cols.require(row, colHeaderExternalID)
+	if err != nil {
 		return nil, fmt.Errorf("missing external ID")
 	}
 
-	accountID := row[colEKSAccountID]
-	if accountID == "" {
+	accountID, err := cols.require(row, colHeaderAccountID)
+	if err != nil {
 		return nil, fmt.Errorf("missing AWS account ID")
 	}
 
-	region := row[colEKSRegion]
-	if region == "" {
+	region, err := cols.require(row, colHeaderRegion)
+	if err != nil {
 		return nil, fmt.Errorf("missing region")
 	}
 
-	version := row[colEKSVersion]
+	version := cols.col(row, colHeaderVersion)
 	// Normalize version to include "k8s-" prefix for consistency
 	if !strings.HasPrefix(version, "k8s-") && version != "" {
 		version = "k8s-" + version
 	}
 
 	// Parse tags
-	tagsJSON := row[colEKSTags]
+	tagsJSON := cols.col(row, colHeaderTags)
 	tags, err := ParseTags(tagsJSON)
 	if err != nil {
 		// Non-fatal, just use empty tags
@@ -140,7 +139,7 @@ func (s *EKSInventorySource) parseEKSRow(ctx context.Context, row []string) (*ty
 	}
 
 	// Get cluster name from CSV
-	clusterName := row[colEKSName]
+	clusterName := cols.col(row, colHeaderName)
 	if clusterName == "" {
 		// Fallback: construct a synthetic name from external ID
 		clusterName = fmt.Sprintf("eks-cluster-%s", externalID[:12])

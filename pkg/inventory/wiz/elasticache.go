@@ -68,10 +68,10 @@ func (s *ElastiCacheInventorySource) ListResources(ctx context.Context, resource
 		ctx,
 		s.client,
 		s.reportID,
-		colMinRequired, // Minimum required columns
-		func(row []string) bool {
+		auroraRequiredColumns, // Same columns as Aurora
+		func(cols columnIndex, row []string) bool {
 			// Filter for ElastiCache resources only
-			return isElastiCacheResource(row[colNativeType])
+			return isElastiCacheResource(cols.col(row, colHeaderNativeType))
 		},
 		s.parseElastiCacheRow,
 	)
@@ -95,9 +95,9 @@ func (s *ElastiCacheInventorySource) GetResource(ctx context.Context, resourceTy
 }
 
 // parseElastiCacheRow parses a single CSV row into a Resource
-func (s *ElastiCacheInventorySource) parseElastiCacheRow(ctx context.Context, row []string) (*types.Resource, error) {
-	resourceARN := row[colARN]
-	if resourceARN == "" {
+func (s *ElastiCacheInventorySource) parseElastiCacheRow(ctx context.Context, cols columnIndex, row []string) (*types.Resource, error) {
+	resourceARN, err := cols.require(row, colHeaderExternalID)
+	if err != nil {
 		return nil, fmt.Errorf("missing ARN")
 	}
 
@@ -108,18 +108,18 @@ func (s *ElastiCacheInventorySource) parseElastiCacheRow(ctx context.Context, ro
 	}
 
 	// Extract metadata
-	resourceName := row[colResourceName]
-	accountID := row[colAWSAccountID]
+	resourceName := cols.col(row, colHeaderName)
+	accountID := cols.col(row, colHeaderAccountID)
 	if accountID == "" {
 		accountID = parsedARN.AccountID
 	}
 
-	engine := normalizeElastiCacheKind(row[colEngineKind])
-	version := row[colEngineVersion]
-	region := row[colRegion]
+	engine := normalizeElastiCacheKind(cols.col(row, colHeaderEngineKind))
+	version := cols.col(row, colHeaderVersion)
+	region := cols.col(row, colHeaderRegion)
 
 	// Parse tags
-	tagsJSON := row[colTags]
+	tagsJSON := cols.col(row, colHeaderTags)
 	tags, err := ParseTags(tagsJSON)
 	if err != nil {
 		// Non-fatal, just use empty tags
