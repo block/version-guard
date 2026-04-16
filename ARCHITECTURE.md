@@ -3,10 +3,10 @@
 ## 📊 Implementation Status
 
 **Production-Tested Resources** (config-driven, zero code changes needed):
-- ✅ **Aurora MySQL** - Tested with 4,257 clusters (config ready, awaiting endoflife.date data)
+- ✅ **Aurora MySQL** - Production tested (config ready, awaiting endoflife.date data)
 - ✅ **Aurora PostgreSQL** - Config ready, requires separate Wiz report ID
-- ✅ **EKS** - Tested with 155 clusters (68% YELLOW, 32% GREEN)
-- ✅ **ElastiCache (Redis/Valkey/Memcached)** - Tested with 3,974 clusters (100% GREEN)
+- ✅ **EKS** - Production tested (policy classification working)
+- ✅ **ElastiCache (Redis/Valkey/Memcached)** - Production tested
 
 **Planned Resources** (add ~15 lines to `config/resources.yaml`):
 - 📋 RDS MySQL/PostgreSQL
@@ -35,7 +35,7 @@
 **Vision:** Version Guard is a **cloud-agnostic** version drift detection platform supporting multiple cloud providers.
 
 ### Phase 1 (Implemented): AWS
-- **Resources**: ✅ Aurora MySQL (4,257 clusters tested), ✅ Aurora PostgreSQL (config ready), ✅ EKS (155 clusters tested), ✅ ElastiCache (3,974 clusters tested), 📋 RDS, 📋 OpenSearch, 📋 Lambda
+- **Resources**: ✅ Aurora MySQL (production tested), ✅ Aurora PostgreSQL (config ready), ✅ EKS (production tested), ✅ ElastiCache (production tested), 📋 RDS, 📋 OpenSearch, 📋 Lambda
 - **Inventory**: Wiz saved reports (primary) + Custom sources (extensible)
 - **EOL Data**: endoflife.date API (404 graceful degradation for products not yet listed)
 
