@@ -258,6 +258,7 @@ func (s *GenericInventorySource) parseResourceRow(
 		Engine:         engine,
 		Service:        service,
 		Brand:          brand,
+		Tags:           tags,
 		DiscoveredAt:   discoveredAt,
 	}
 
