@@ -1,5 +1,7 @@
 # Version Guard
 
+> ⚠️ **Work in Progress / Experimental** — Version Guard is under active development. APIs, configuration formats, and behavior may change without notice. Use at your own risk in production environments.
+
 **Version Guard** is an open-source cloud infrastructure version monitoring system that continuously scans cloud resources (databases, caches, compute) to detect version drift and compliance issues.
 
 ## 🎯 Purpose
@@ -129,7 +131,10 @@ docker compose up --build
 |---------|---------|------|
 | `temporal` | Workflow orchestration | `7233` (gRPC), `8233` (Web UI) |
 | `minio` | S3-compatible snapshot storage | `9000` (API), `9001` (Console) |
+| `endoflife` | Local EOL data override (nginx) | `8082` |
 | `version-guard` | The server | `8080` (gRPC) |
+
+The `endoflife` service serves patched EOL data for products with pending upstream PRs on [endoflife.date](https://endoflife.date), and proxies everything else to the live API. See [`deploy/endoflife-override/README.md`](./deploy/endoflife-override/README.md) for details on adding or updating overrides.
 
 Once running, open the Temporal Web UI at http://localhost:8233 to trigger and monitor workflows.
 
@@ -252,6 +257,7 @@ Version Guard is configured via environment variables or CLI flags:
 | `WIZ_CLIENT_ID_SECRET` | Wiz client ID (optional) | - |
 | `WIZ_CLIENT_SECRET_SECRET` | Wiz client secret (optional) | - |
 | `WIZ_REPORT_IDS` | JSON map of resource ID to Wiz report ID (optional) | - |
+| `EOL_BASE_URL` | Custom endoflife.date API base URL (optional) | `https://endoflife.date/api` |
 | `CONFIG_PATH` | Path to resources config file | `config/resources.yaml` |
 | `TAG_APP_KEYS` | Comma-separated AWS tag keys for app/service | `app,application,service` |
 | `TAG_ENV_KEYS` | Comma-separated AWS tag keys for environment | `environment,env` |

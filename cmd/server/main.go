@@ -53,6 +53,9 @@ type ServerCLI struct {
 	WizElastiCacheReportID string `help:"Wiz saved report ID for ElastiCache inventory" env:"WIZ_ELASTICACHE_REPORT_ID"`
 	WizEKSReportID         string `help:"Wiz saved report ID for EKS inventory" env:"WIZ_EKS_REPORT_ID"`
 
+	// EOL configuration
+	EOLBaseURL string `help:"Custom base URL for endoflife.date API (e.g., http://localhost:8082/api)" env:"EOL_BASE_URL"`
+
 	// AWS configuration (for EOL APIs)
 	AWSRegion string `help:"AWS region for EOL APIs" default:"us-west-2" env:"AWS_REGION"`
 
@@ -206,7 +209,13 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	}
 
 	// Create EOL HTTP client (shared across all resources)
-	eolHTTPClient := eolendoflife.NewRealHTTPClient()
+	var eolHTTPClient eolendoflife.Client
+	if s.EOLBaseURL != "" {
+		fmt.Printf("✓ Using custom EOL API: %s\n", s.EOLBaseURL)
+		eolHTTPClient = eolendoflife.NewRealHTTPClientWithConfig(nil, s.EOLBaseURL)
+	} else {
+		eolHTTPClient = eolendoflife.NewRealHTTPClient()
+	}
 	cacheTTL := 24 * time.Hour
 
 	// Initialize policy engine (shared across all detectors)
