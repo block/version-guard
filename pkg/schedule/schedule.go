@@ -92,14 +92,19 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 		return nil
 	}
 
-	// Update the schedule with the new spec
+	// Update the schedule with the new spec.
+	// We replace the entire Spec rather than mutating fields because Temporal
+	// parses CronExpressions into Calendars/StructuredCalendar server-side on
+	// create. On subsequent describes, the cron lives in Calendars and
+	// CronExpressions comes back empty — mutating CronExpressions alone would
+	// leave stale calendars in place, causing the schedule to fire on both
+	// the old and new cadences after every restart with a changed cron.
 	err = handle.Update(ctx, client.ScheduleUpdateOptions{
 		DoUpdate: func(input client.ScheduleUpdateInput) (*client.ScheduleUpdate, error) {
-			if input.Description.Schedule.Spec == nil {
-				input.Description.Schedule.Spec = &client.ScheduleSpec{}
+			input.Description.Schedule.Spec = &client.ScheduleSpec{
+				CronExpressions: []string{cfg.CronExpression},
+				Jitter:          cfg.Jitter,
 			}
-			input.Description.Schedule.Spec.CronExpressions = []string{cfg.CronExpression}
-			input.Description.Schedule.Spec.Jitter = cfg.Jitter
 			if action, ok := input.Description.Schedule.Action.(*client.ScheduleWorkflowAction); ok {
 				action.TaskQueue = cfg.TaskQueue
 			}

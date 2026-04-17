@@ -221,6 +221,57 @@ func TestEnsureSchedule_AlreadyExists_NilSpec(t *testing.T) {
 	assert.True(t, handle.updateCalled, "Update should be called when Spec is nil")
 }
 
+// TestEnsureSchedule_Update_ReplacesStaleCalendars guards against a bug where
+// Temporal's describe() returns the parsed cron inside Calendars with an empty
+// CronExpressions field. Mutating only CronExpressions on update would leave
+// stale Calendars in place, causing the schedule to fire on both the old and
+// new crons after a restart with a changed schedule.
+func TestEnsureSchedule_Update_ReplacesStaleCalendars(t *testing.T) {
+	handle := &mockScheduleHandle{
+		id: "test-schedule",
+		describeOut: &client.ScheduleDescription{
+			Schedule: client.Schedule{
+				Spec: &client.ScheduleSpec{
+					// Simulate what a real Temporal server returns after a
+					// previous create: cron parsed into Calendars, CronExpressions empty.
+					Calendars: []client.ScheduleCalendarSpec{
+						{Minute: []client.ScheduleRange{{Start: 0, End: 59, Step: 2}}},
+					},
+					Jitter: 30 * time.Second,
+				},
+			},
+		},
+	}
+	var captured *client.ScheduleUpdate
+	handle.updateFn = func(opts client.ScheduleUpdateOptions) {
+		input := client.ScheduleUpdateInput{Description: *handle.describeOut}
+		result, err := opts.DoUpdate(input)
+		require.NoError(t, err)
+		captured = result
+	}
+	mock := &mockCreator{
+		createErr: temporal.ErrScheduleAlreadyRunning,
+		handle:    handle,
+	}
+	mgr := NewManagerWithClient(mock)
+
+	err := mgr.EnsureSchedule(context.Background(), Config{
+		Enabled:        true,
+		ScheduleID:     "test-schedule",
+		CronExpression: "*/5 * * * *",
+		Jitter:         1 * time.Minute,
+		TaskQueue:      "test-queue",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	require.NotNil(t, captured.Schedule.Spec)
+	assert.Empty(t, captured.Schedule.Spec.Calendars,
+		"stale Calendars must be cleared on update to prevent cron stacking")
+	assert.Equal(t, []string{"*/5 * * * *"}, captured.Schedule.Spec.CronExpressions)
+	assert.Equal(t, 1*time.Minute, captured.Schedule.Spec.Jitter)
+}
+
 func TestEnsureSchedule_DescribeError(t *testing.T) {
 	handle := &mockScheduleHandle{
 		id:          "test-schedule",

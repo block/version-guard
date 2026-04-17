@@ -63,6 +63,10 @@ services:
       WIZ_CLIENT_SECRET_SECRET: ${WIZ_CLIENT_SECRET_SECRET:-}
       WIZ_REPORT_IDS: ${WIZ_REPORT_IDS:-}
       EOL_BASE_URL: http://endoflife:8080/api
+      SCHEDULE_ENABLED: ${SCHEDULE_ENABLED:-false}
+      SCHEDULE_CRON: ${SCHEDULE_CRON:-0 6 * * *}
+      SCHEDULE_ID: ${SCHEDULE_ID:-version-guard-scan}
+      SCHEDULE_JITTER: ${SCHEDULE_JITTER:-5m}
     ports:
       - "8080:8080"
       - "8081:8081"
