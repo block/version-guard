@@ -318,7 +318,7 @@ func TestParseResourceRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "arn:aws:rds:us-west-2:123456789012:cluster:my-cluster", resource.ID)
 	assert.Equal(t, "my-cluster", resource.Name)
-	assert.Equal(t, types.ResourceType("aurora"), resource.Type)
+	assert.Equal(t, types.ResourceType("aurora-postgresql"), resource.Type)
 	assert.Equal(t, types.CloudProviderAWS, resource.CloudProvider)
 	assert.Equal(t, "123456789012", resource.CloudAccountID)
 	assert.Equal(t, "us-west-2", resource.CloudRegion)
@@ -422,21 +422,6 @@ func TestGetRequiredColumns_NoMappings(t *testing.T) {
 	assert.Contains(t, columns, colHeaderExternalID)
 	assert.Contains(t, columns, colHeaderName)
 	assert.Len(t, columns, 6) // Only the 6 base columns
-}
-
-func TestListResources_UnsupportedResourceType(t *testing.T) {
-	cfg := config.ResourceConfig{
-		ID:   "aurora-postgresql",
-		Type: "aurora",
-	}
-
-	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
-
-	ctx := context.Background()
-	_, err := source.ListResources(ctx, types.ResourceType("eks"))
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported resource type")
 }
 
 func TestListResources_NoReportID(t *testing.T) {

@@ -238,6 +238,8 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	var registryClient registry.Client
 
 	// Initialize detectors from config
+	// Keyed by config ID (not resource type) to support multiple resources
+	// of the same type (e.g., aurora-postgresql and aurora-mysql both type "aurora")
 	fmt.Println("\nInitializing detectors from configuration...")
 	detectors := make(map[types.ResourceType]interface{})
 	invSources := make(map[types.ResourceType]inventory.InventorySource)
@@ -274,14 +276,14 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 			continue
 		}
 
-		// Store in maps for Temporal activities
-		resourceType := types.ResourceType(resourceCfg.Type)
-		invSources[resourceType] = invSource
-		eolProviders[resourceType] = eolProvider
+		// Store in maps for Temporal activities, keyed by config ID
+		configID := types.ResourceType(resourceCfg.ID)
+		invSources[configID] = invSource
+		eolProviders[configID] = eolProvider
 
 		// Create generic detector
 		detector := generic.NewDetector(resourceCfg, invSource, eolProvider, policyEngine, logger)
-		detectors[resourceType] = detector
+		detectors[configID] = detector
 		fmt.Printf("    ✓ Generic detector initialized for %s\n", resourceCfg.ID)
 	}
 

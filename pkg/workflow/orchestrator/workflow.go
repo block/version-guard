@@ -66,11 +66,13 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// Default to all supported resource types if none specified
 	resourceTypes := input.ResourceTypes
 	if len(resourceTypes) == 0 {
-		// Use lowercase resource types that match config file
+		// Use config IDs from resources.yaml (not resource types)
+		// to support multiple resources of the same type
 		resourceTypes = []types.ResourceType{
-			"aurora",
-			"elasticache",
+			"aurora-postgresql",
+			"aurora-mysql",
 			"eks",
+			"elasticache-redis",
 			"opensearch",
 		}
 	}

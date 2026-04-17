@@ -71,13 +71,10 @@ func (s *GenericInventorySource) CloudProvider() types.CloudProvider {
 	}
 }
 
-// ListResources fetches resources from Wiz using the configured report
+// ListResources fetches resources from Wiz using the configured report.
+// The resourceType parameter is accepted for interface compatibility but
+// the source uses its own config type internally.
 func (s *GenericInventorySource) ListResources(ctx context.Context, resourceType types.ResourceType) ([]*types.Resource, error) {
-	// Verify resource type matches config
-	if string(resourceType) != s.config.Type {
-		return nil, errors.Errorf("unsupported resource type: %s (expected: %s)", resourceType, s.config.Type)
-	}
-
 	// Get report ID from WIZ_REPORT_IDS map
 	reportID, err := getReportIDFromMap(s.config.ID)
 	if err != nil {
@@ -266,7 +263,7 @@ func (s *GenericInventorySource) parseResourceRow(
 	resource := &types.Resource{
 		ID:             externalID,
 		Name:           name,
-		Type:           types.ResourceType(s.config.Type),
+		Type:           types.ResourceType(s.config.ID),
 		CloudProvider:  s.CloudProvider(),
 		CloudAccountID: accountID,
 		CloudRegion:    region,
