@@ -18,23 +18,67 @@ import (
 // Built from the header row of a Wiz saved report CSV.
 type columnIndex map[string]int
 
+// columnAliases maps canonical column names to alternative names found in
+// different Wiz report schemas. When a canonical name is not present in the
+// CSV header, the alias is tried as a fallback. This handles schema
+// differences such as the DB_SERVER schema used by OpenSearch reports.
+var columnAliases = map[string]string{
+	"versionDetails.version":  "version",
+	"region":                  "regionLocation",
+	"cloudAccount.externalId": "cloudPlatform",
+	"name":                    "Name",
+}
+
 // buildColumnIndex creates a columnIndex from a CSV header row.
+// It also registers unprefixed aliases for columns with dotted prefixes
+// (e.g., "DB_SERVER.externalId" is also stored as "externalId") so that
+// field mappings work across different Wiz report schemas.
 func buildColumnIndex(header []string) columnIndex {
-	idx := make(columnIndex, len(header))
+	idx := make(columnIndex, len(header)*2)
 	for i, name := range header {
 		idx[name] = i
+		// Strip prefix: "DB_SERVER.externalId" → "externalId"
+		if dotIdx := strings.LastIndex(name, "."); dotIdx >= 0 {
+			unprefixed := name[dotIdx+1:]
+			if _, exists := idx[unprefixed]; !exists {
+				idx[unprefixed] = i
+			}
+		}
 	}
 	return idx
 }
 
 // col returns the value of the named column from a CSV row.
 // Returns "" if the column is not in the header or the row is too short.
+// Falls back to columnAliases if the canonical name is not found.
 func (ci columnIndex) col(row []string, name string) string {
 	i, ok := ci[name]
-	if !ok || i >= len(row) {
+	if !ok {
+		// Try alias fallback
+		if alias, hasAlias := columnAliases[name]; hasAlias {
+			i, ok = ci[alias]
+		}
+		if !ok {
+			return ""
+		}
+	}
+	if i >= len(row) {
 		return ""
 	}
 	return row[i]
+}
+
+// hasColumn returns true if the named column (or an alias for it) exists in the index.
+func (ci columnIndex) hasColumn(name string) bool {
+	if _, ok := ci[name]; ok {
+		return true
+	}
+	if alias, hasAlias := columnAliases[name]; hasAlias {
+		if _, ok := ci[alias]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // require returns the value of the named column, or an error if it is missing
@@ -42,7 +86,7 @@ func (ci columnIndex) col(row []string, name string) string {
 func (ci columnIndex) require(row []string, name string) (string, error) {
 	v := ci.col(row, name)
 	if v == "" {
-		if _, ok := ci[name]; !ok {
+		if !ci.hasColumn(name) {
 			return "", fmt.Errorf("column %q not found in CSV header", name)
 		}
 		return "", fmt.Errorf("missing value for column %q", name)
@@ -113,18 +157,31 @@ func parseWizReport(
 	// Build column index from header row
 	cols := buildColumnIndex(rows[0])
 
-	// Validate that all required columns are present
+	// Validate that all required columns are present (using alias-aware lookup)
 	for _, name := range requiredColumns {
-		if _, ok := cols[name]; !ok {
+		if !cols.hasColumn(name) {
 			return nil, fmt.Errorf("required column %q not found in CSV header (have: %v)", name, rows[0])
 		}
 	}
 
+	totalDataRows := len(rows) - 1
+	logger.InfoContext(ctx, "processing Wiz report",
+		"total_rows", totalDataRows,
+		"report_id", reportID)
+
 	// Parse data rows (skip header)
 	var resources []*types.Resource
+	var filteredCount int
+	var filteredNativeTypes []string
 	for i, row := range rows[1:] {
 		// Apply resource type filter
 		if !filterRow(cols, row) {
+			filteredCount++
+			if len(filteredNativeTypes) < 3 {
+				if nt := cols.col(row, colHeaderNativeType); nt != "" {
+					filteredNativeTypes = append(filteredNativeTypes, nt)
+				}
+			}
 			continue
 		}
 
@@ -142,6 +199,12 @@ func parseWizReport(
 			resources = append(resources, resource)
 		}
 	}
+
+	logger.InfoContext(ctx, "Wiz report processing complete",
+		"matched", len(resources),
+		"filtered", filteredCount,
+		"total_rows", totalDataRows,
+		"sample_filtered_types", filteredNativeTypes)
 
 	return resources, nil
 }

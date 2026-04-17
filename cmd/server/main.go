@@ -19,14 +19,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
-	"github.com/block/Version-Guard/pkg/detector/aurora"
-	"github.com/block/Version-Guard/pkg/detector/eks"
+	vgconfig "github.com/block/Version-Guard/pkg/config"
+	"github.com/block/Version-Guard/pkg/detector/generic"
 	"github.com/block/Version-Guard/pkg/eol"
 	eolendoflife "github.com/block/Version-Guard/pkg/eol/endoflife"
 	"github.com/block/Version-Guard/pkg/inventory"
-	invmock "github.com/block/Version-Guard/pkg/inventory/mock"
 	"github.com/block/Version-Guard/pkg/inventory/wiz"
 	"github.com/block/Version-Guard/pkg/policy"
+	"github.com/block/Version-Guard/pkg/registry"
 	"github.com/block/Version-Guard/pkg/schedule"
 	"github.com/block/Version-Guard/pkg/snapshot"
 	"github.com/block/Version-Guard/pkg/store/memory"
@@ -54,6 +54,9 @@ type ServerCLI struct {
 	WizElastiCacheReportID string `help:"Wiz saved report ID for ElastiCache inventory" env:"WIZ_ELASTICACHE_REPORT_ID"`
 	WizEKSReportID         string `help:"Wiz saved report ID for EKS inventory" env:"WIZ_EKS_REPORT_ID"`
 
+	// EOL configuration
+	EOLBaseURL string `help:"Custom base URL for endoflife.date API (e.g., http://localhost:8082/api)" env:"EOL_BASE_URL"`
+
 	// AWS configuration (for EOL APIs)
 	AWSRegion string `help:"AWS region for EOL APIs" default:"us-west-2" env:"AWS_REGION"`
 
@@ -75,6 +78,9 @@ type ServerCLI struct {
 	ScheduleCron    string `help:"Cron expression for scan schedule" default:"0 6 * * *" env:"SCHEDULE_CRON"`
 	ScheduleID      string `help:"Temporal schedule ID" default:"version-guard-scan" env:"SCHEDULE_ID"`
 	ScheduleJitter  string `help:"Schedule jitter duration" default:"5m" env:"SCHEDULE_JITTER"`
+
+	// Resource configuration
+	ConfigPath string `help:"Path to resources config file" default:"config/resources.yaml" env:"CONFIG_PATH"`
 
 	// Global flags
 	Verbose bool `short:"v" help:"Enable verbose logging"`
@@ -187,9 +193,13 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	defer temporalClient.Close()
 	fmt.Printf("✓ Connected to Temporal at %s (namespace: %s)\n", s.TemporalEndpoint, s.TemporalNamespace)
 
-	// Create activity dependencies
-	invSources := make(map[types.ResourceType]inventory.InventorySource)
-	eolProviders := make(map[types.ResourceType]eol.Provider)
+	// Load resource configuration
+	fmt.Printf("Loading resource configuration from %s...\n", s.ConfigPath)
+	resourcesConfig, err := vgconfig.LoadResourcesConfig(s.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to load resources config: %w", err)
+	}
+	fmt.Printf("✓ Configuration loaded: %d resource(s) defined\n", len(resourcesConfig.Resources))
 
 	// Build tag configuration from environment variables
 	tagConfig := s.buildTagConfig()
@@ -200,106 +210,85 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  Brand tags: %v\n", tagConfig.BrandTags)
 	}
 
-	// Configure inventory sources
+	// Initialize Wiz client if credentials provided
+	var wizClient *wiz.Client
 	if s.WizClientIDSecret != "" && s.WizClientSecretSecret != "" {
-		// Real Wiz credentials provided — use live inventory
 		fmt.Println("✓ Wiz credentials configured — using live inventory")
 		wizHTTPClient := wiz.NewHTTPClient(s.WizClientIDSecret, s.WizClientSecretSecret)
-		wizClient := wiz.NewClient(wizHTTPClient, time.Duration(s.WizCacheTTLHours)*time.Hour)
-
-		if s.WizAuroraReportID != "" {
-			invSources[types.ResourceTypeAurora] = wiz.NewAuroraInventorySource(wizClient, s.WizAuroraReportID, logger).
-				WithTagConfig(tagConfig)
-			fmt.Println("✓ Aurora inventory source configured (Wiz)")
-		}
-		if s.WizElastiCacheReportID != "" {
-			invSources[types.ResourceTypeElastiCache] = wiz.NewElastiCacheInventorySource(wizClient, s.WizElastiCacheReportID, logger).
-				WithTagConfig(tagConfig)
-			fmt.Println("✓ ElastiCache inventory source configured (Wiz)")
-		}
-		if s.WizEKSReportID != "" {
-			invSources[types.ResourceTypeEKS] = wiz.NewEKSInventorySource(wizClient, s.WizEKSReportID, logger).
-				WithTagConfig(tagConfig)
-			fmt.Println("✓ EKS inventory source configured (Wiz)")
-		}
+		wizClient = wiz.NewClient(wizHTTPClient, time.Duration(s.WizCacheTTLHours)*time.Hour)
 	} else {
-		// No Wiz credentials — use mock inventory
-		fmt.Println("⚠️  No Wiz credentials configured — using mock inventory data")
+		fmt.Println("⚠️  No Wiz credentials configured — using mock inventory")
 		fmt.Println("   To use live data, set WIZ_CLIENT_ID_SECRET and WIZ_CLIENT_SECRET_SECRET")
-
-		// Create mock inventory with sample data
-		now := time.Now()
-		mockAuroraResources := []*types.Resource{
-			{
-				ID:             "arn:aws:rds:us-west-2:123456789012:cluster:aurora-cluster-1",
-				Name:           "aurora-cluster-1",
-				Type:           types.ResourceTypeAurora,
-				CurrentVersion: "15.3",
-				Engine:         "aurora-postgresql",
-				CloudProvider:  types.CloudProviderAWS,
-				CloudRegion:    "us-west-2",
-				CloudAccountID: "123456789012",
-				Service:        "example-service",
-				Tags: map[string]string{
-					"environment": "production",
-					"team":        "platform",
-				},
-				DiscoveredAt: now,
-			},
-		}
-		invSources[types.ResourceTypeAurora] = &invmock.InventorySource{
-			Resources: mockAuroraResources,
-		}
-		fmt.Println("✓ Aurora inventory source configured (mock)")
 	}
 
-	// Configure EOL providers
-	// Note: This example uses endoflife.date API. For production with AWS credentials:
-	// - Create Real AWS RDS/EKS clients following the pattern in pkg/eol/aws/eks_client.go
-	//   eksClient, _ := eolaws.NewRealEKSClient(context.Background(), s.AWSRegion)
-	//   eolProviders[types.ResourceTypeEKS] = eolaws.NewEKSEOLProvider(eksClient, 24*time.Hour)
-
-	// Create HTTP client for endoflife.date API
-	eolHTTPClient := eolendoflife.NewRealHTTPClient()
+	// Create EOL HTTP client (shared across all resources)
+	var eolHTTPClient eolendoflife.Client
+	if s.EOLBaseURL != "" {
+		fmt.Printf("✓ Using custom EOL API: %s\n", s.EOLBaseURL)
+		eolHTTPClient = eolendoflife.NewRealHTTPClientWithConfig(nil, s.EOLBaseURL)
+	} else {
+		eolHTTPClient = eolendoflife.NewRealHTTPClient()
+	}
 	cacheTTL := 24 * time.Hour
 
-	// Aurora EOL provider (using endoflife.date for PostgreSQL versions)
-	eolProviders[types.ResourceTypeAurora] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
-	fmt.Println("✓ Aurora EOL provider configured (endoflife.date API)")
-
-	// EKS EOL provider (using endoflife.date for Kubernetes versions)
-	eolProviders[types.ResourceTypeEKS] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
-	fmt.Println("✓ EKS EOL provider configured (endoflife.date API)")
-
-	// ElastiCache EOL provider
-	eolProviders[types.ResourceTypeElastiCache] = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
-	fmt.Println("✓ ElastiCache EOL provider configured (endoflife.date API)")
-
-	// Initialize policy engine
+	// Initialize policy engine (shared across all detectors)
 	policyEngine := policy.NewDefaultPolicy()
 
-	// Initialize detectors
+	// Create registry client (optional, for service lookups)
+	var registryClient registry.Client
+
+	// Initialize detectors from config
+	fmt.Println("\nInitializing detectors from configuration...")
 	detectors := make(map[types.ResourceType]interface{})
-	if invSources[types.ResourceTypeAurora] != nil && eolProviders[types.ResourceTypeAurora] != nil {
-		detectors[types.ResourceTypeAurora] = aurora.NewDetector(
-			invSources[types.ResourceTypeAurora],
-			eolProviders[types.ResourceTypeAurora],
-			policyEngine,
-			logger,
-		)
-		fmt.Println("✓ Aurora detector initialized")
+	invSources := make(map[types.ResourceType]inventory.InventorySource)
+	eolProviders := make(map[types.ResourceType]eol.Provider)
+
+	for i := range resourcesConfig.Resources {
+		resourceCfg := &resourcesConfig.Resources[i]
+		fmt.Printf("  Configuring %s (%s)...\n", resourceCfg.ID, resourceCfg.Type)
+
+		// Create inventory source
+		var invSource inventory.InventorySource
+		if resourceCfg.Inventory.Source == "wiz" {
+			if wizClient == nil {
+				// Wiz client not available (no credentials)
+				fmt.Printf("    ⚠️  Skipping %s - Wiz credentials not configured\n", resourceCfg.ID)
+				continue
+			}
+
+			// Create generic inventory source
+			invSource = wiz.NewGenericInventorySource(wizClient, resourceCfg, registryClient, logger)
+			fmt.Printf("    ✓ Wiz inventory source created (reads from WIZ_REPORT_IDS[%s])\n", resourceCfg.ID)
+		} else {
+			fmt.Printf("    ⚠️  Unsupported inventory source: %s\n", resourceCfg.Inventory.Source)
+			continue
+		}
+
+		// Create EOL provider based on config
+		var eolProvider eol.Provider
+		if resourceCfg.EOL.Provider == "endoflife-date" {
+			eolProvider = eolendoflife.NewProvider(eolHTTPClient, cacheTTL, logger)
+			fmt.Printf("    ✓ EOL provider created (endoflife.date: %s)\n", resourceCfg.EOL.Product)
+		} else {
+			fmt.Printf("    ⚠️  Unsupported EOL provider: %s\n", resourceCfg.EOL.Provider)
+			continue
+		}
+
+		// Store in maps for Temporal activities
+		resourceType := types.ResourceType(resourceCfg.Type)
+		invSources[resourceType] = invSource
+		eolProviders[resourceType] = eolProvider
+
+		// Create generic detector
+		detector := generic.NewDetector(resourceCfg, invSource, eolProvider, policyEngine, logger)
+		detectors[resourceType] = detector
+		fmt.Printf("    ✓ Generic detector initialized for %s\n", resourceCfg.ID)
 	}
-	// Note: ElastiCache detector not yet implemented in open-source version
-	// You can implement it by following the pattern in pkg/detector/aurora/
-	if invSources[types.ResourceTypeEKS] != nil && eolProviders[types.ResourceTypeEKS] != nil {
-		detectors[types.ResourceTypeEKS] = eks.NewDetector(
-			invSources[types.ResourceTypeEKS],
-			eolProviders[types.ResourceTypeEKS],
-			policyEngine,
-			logger,
-		)
-		fmt.Println("✓ EKS detector initialized")
+
+	if len(detectors) == 0 {
+		return fmt.Errorf("no detectors configured - check your config file and Wiz credentials")
 	}
+	fmt.Printf("\n✓ Total detectors initialized: %d\n", len(detectors))
 
 	// Start gRPC server
 	// Note: gRPC server requires protobuf code generation first.
@@ -338,10 +327,19 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 
 	// Register activities
 	// Detection workflow activities
-	// Note: We use a single EOL provider here. In production, you might want separate providers per resource type
+	// Use first available EOL provider (all resources use endoflife.date which supports multiple engines)
+	var firstEOLProvider eol.Provider
+	for _, provider := range eolProviders {
+		firstEOLProvider = provider
+		break
+	}
+	if firstEOLProvider == nil {
+		return fmt.Errorf("no EOL providers configured")
+	}
+
 	detectionActivities := detection.NewActivities(
 		invSources,
-		eolProviders[types.ResourceTypeAurora], // Use one provider for all (endoflife.date supports multiple engines)
+		firstEOLProvider,
 		policyEngine,
 		st,
 	)

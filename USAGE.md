@@ -140,9 +140,11 @@ export GRPC_PORT=8080
 # Optional: Configure Wiz (otherwise uses mock data)
 export WIZ_CLIENT_ID_SECRET=your-client-id
 export WIZ_CLIENT_SECRET_SECRET=your-client-secret
-export WIZ_AURORA_REPORT_ID=your-report-id
-export WIZ_ELASTICACHE_REPORT_ID=your-report-id
-export WIZ_EKS_REPORT_ID=your-report-id
+export WIZ_REPORT_IDS='{
+  "aurora-mysql":"your-aurora-report-id",
+  "eks":"your-eks-report-id",
+  "elasticache-redis":"your-elasticache-report-id"
+}'
 
 # Optional: Configure S3 snapshots
 export S3_BUCKET=version-guard-snapshots
@@ -166,23 +168,183 @@ docker run -p 8080:8080 \
   version-guard:latest
 ```
 
+#### Run Full Stack with docker-compose (Recommended for Testing)
+
+The easiest way to run a complete Version Guard environment locally with Temporal, MinIO (S3), and the detector service:
+
+**1. Configure environment variables:**
+
+```bash
+# Copy example file
+cp .env.example .env
+
+# Edit .env and set your Wiz credentials:
+WIZ_CLIENT_ID_SECRET=your-client-id-here
+WIZ_CLIENT_SECRET_SECRET=your-client-secret-here
+WIZ_REPORT_IDS={"aurora-mysql":"report-id","eks":"report-id","elasticache-redis":"report-id"}
+```
+
+**2. Start the stack:**
+
+```bash
+# Start all services (Temporal, MinIO, Version Guard)
+docker compose up --build -d
+
+# Check that all services are running
+docker compose ps
+
+# Expected output:
+# NAME                                    STATUS
+# oss-version-guard-temporal-1            Up (healthy)
+# oss-version-guard-minio-1               Up
+# oss-version-guard-version-guard-1       Up
+```
+
+**3. Verify services are ready:**
+
+```bash
+# Check Version Guard logs
+docker compose logs version-guard
+
+# Look for these lines:
+# ✓ Configuration loaded: 4 resource(s) defined
+# ✓ Wiz credentials configured — using live inventory
+# ✓ Total detectors initialized: 3
+# ✓ Temporal worker starting on queue: version-guard-detection
+# Version Guard is ready!
+```
+
+**4. Access web interfaces:**
+
+- **Temporal Web UI**: http://localhost:8233
+- **MinIO Console**: http://localhost:9001 (credentials: minioadmin/minioadmin)
+
+**5. Trigger a detection workflow:**
+
+```bash
+# Start workflow via Temporal CLI
+docker compose exec temporal temporal workflow start \
+  --task-queue version-guard-detection \
+  --type OrchestratorWorkflow \
+  --input '{}' \
+  --address localhost:7233 \
+  --namespace version-guard-dev
+
+# Output:
+# Running execution:
+#   WorkflowId  56c94211-e88d-4b9b-bda9-8acf39b73329
+#   RunId       019d9654-498c-79b8-83c8-ad6ee0de4d7f
+#   Type        OrchestratorWorkflow
+```
+
+**6. Monitor workflow execution:**
+
+```bash
+# Watch Version Guard logs in real-time
+docker compose logs --follow version-guard
+
+# Check workflow status (use WorkflowId from step 5)
+docker compose exec temporal temporal workflow describe \
+  --workflow-id 56c94211-e88d-4b9b-bda9-8acf39b73329 \
+  --namespace version-guard-dev
+
+# Or view in Temporal Web UI:
+# http://localhost:8233 → Workflows → Select your workflow
+```
+
+**7. View workflow results:**
+
+Example successful execution:
+```
+Status: COMPLETED
+Total Findings: 8,386 resources scanned
+Compliance: 45.36%
+Runtime: 29.35 seconds
+
+Resource Breakdown:
+  aurora: 4,257 findings
+  eks: 155 findings (65 GREEN, 90 YELLOW)
+  elasticache: 3,974 findings (3,739 GREEN, 138 YELLOW, 97 UNKNOWN)
+
+Snapshot created: s3://version-guard-snapshots/snapshots/YYYY/MM/DD/{workflow-id}.json
+```
+
+**8. Verify snapshot in MinIO:**
+
+```bash
+# Check logs for snapshot confirmation
+docker compose logs version-guard | grep "Snapshot created"
+
+# Or browse snapshots in MinIO Console:
+# http://localhost:9001 → Buckets → version-guard-snapshots → snapshots
+```
+
+**9. Stop the stack:**
+
+```bash
+# Stop and remove containers
+docker compose down
+
+# Stop and remove containers + volumes (clean slate)
+docker compose down -v
+```
+
+**Troubleshooting local workflow execution:**
+
+```bash
+# Check if Temporal is healthy
+docker compose ps temporal
+
+# Check if Version Guard connected to Temporal
+docker compose logs version-guard | grep "Connected to Temporal"
+
+# View detailed workflow errors
+docker compose exec temporal temporal workflow describe \
+  --workflow-id <WORKFLOW_ID> \
+  --namespace version-guard-dev
+
+# Check activity errors
+docker compose logs version-guard | grep -i error
+```
+
 ### Starting the Detector Workflow
 
-The orchestrator workflow automatically triggers detection workflows for all resource types (Aurora, ElastiCache, EKS) on a schedule.
+The orchestrator workflow automatically triggers detection workflows for all configured resource types in parallel.
 
 **Manual Trigger via Temporal UI:**
 1. Navigate to your Temporal UI (e.g., http://localhost:8233)
-2. Start workflow: `VersionGuardOrchestratorWorkflow`
-3. Input: `{}`
-4. Monitor workflow execution
+2. Start workflow: `OrchestratorWorkflow`
+3. Task Queue: `version-guard-detection`
+4. Input: `{}` (empty for all resources, or specify: `{"ResourceTypes":["aurora","eks"]}`)
+5. Monitor workflow execution
+
+**Manual Trigger via Temporal CLI:**
+```bash
+# Scan all configured resources
+temporal workflow start \
+  --task-queue version-guard-detection \
+  --type OrchestratorWorkflow \
+  --input '{}' \
+  --namespace version-guard-dev
+
+# Scan specific resources only
+temporal workflow start \
+  --task-queue version-guard-detection \
+  --type OrchestratorWorkflow \
+  --input '{"ResourceTypes":["eks","elasticache"]}' \
+  --namespace version-guard-dev
+```
 
 **Monitor Progress:**
 ```bash
-# Check temporal workflows
+# List all workflows
 temporal workflow list --namespace version-guard-dev
 
 # View workflow details
 temporal workflow describe --workflow-id <workflow-id> --namespace version-guard-dev
+
+# Watch workflow execution in real-time
+temporal workflow observe --workflow-id <workflow-id> --namespace version-guard-dev
 ```
 
 ### Monitoring
@@ -466,9 +628,7 @@ WIZ_CLIENT_SECRET_SECRET=your-wiz-client-secret-here
 WIZ_CACHE_TTL_HOURS=1
 
 # Wiz Saved Report IDs
-WIZ_AURORA_REPORT_ID=your-aurora-report-id
-WIZ_ELASTICACHE_REPORT_ID=your-elasticache-report-id
-WIZ_EKS_REPORT_ID=your-eks-report-id
+WIZ_REPORT_IDS='{"aurora-mysql":"your-report-id","eks":"your-report-id","elasticache-redis":"your-report-id"}'
 
 # AWS Configuration
 AWS_REGION=us-west-2

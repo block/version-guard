@@ -32,6 +32,9 @@ var ProductMapping = map[string]string{
 	"elasticache-redis":  "amazon-elasticache-redis",
 	"valkey":             "valkey",
 	"elasticache-valkey": "valkey",
+
+	"opensearch":    "amazon-opensearch",
+	"elasticsearch": "elasticsearch",
 }
 
 const (
@@ -173,6 +176,16 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 		// Fetch from endoflife.date API (only one goroutine executes this)
 		cycles, err := p.client.GetProductCycles(ctx, product)
 		if err != nil {
+			// Check if this is a 404 (product not available on endoflife.date yet)
+			// This can happen for new products or pending PRs (e.g., aurora-mysql)
+			if strings.Contains(err.Error(), "404") {
+				p.logger.WarnContext(ctx, "product not found on endoflife.date, returning empty lifecycle",
+					"engine", engine,
+					"product", product,
+					"note", "This may be a new product or pending PR on endoflife.date")
+				// Return empty list - caller will return UNKNOWN lifecycle
+				return []*types.VersionLifecycle{}, nil
+			}
 			return nil, errors.Wrapf(err, "failed to fetch cycles for product %s", product)
 		}
 

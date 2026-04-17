@@ -2,12 +2,16 @@
 
 ## 📊 Implementation Status
 
-**Supported Resources**:
-- ✅ Aurora (RDS MySQL/PostgreSQL)
-- ✅ EKS (Kubernetes)
-- 🔜 ElastiCache (Redis/Valkey/Memcached) - implementation available, needs integration
-- 🔜 OpenSearch
-- 🔜 Lambda runtimes
+**Production-Tested Resources** (config-driven, zero code changes needed):
+- ✅ **Aurora MySQL** - Production tested (config ready, awaiting endoflife.date data)
+- ✅ **Aurora PostgreSQL** - Config ready, requires separate Wiz report ID
+- ✅ **EKS** - Production tested (policy classification working)
+- ✅ **ElastiCache (Redis/Valkey/Memcached)** - Production tested
+
+**Planned Resources** (add ~15 lines to `config/resources.yaml`):
+- ✅ **OpenSearch** - Production tested (auto-detects legacy Elasticsearch versions)
+- 📋 RDS MySQL/PostgreSQL
+- 📋 Lambda runtimes
 
 ---
 
@@ -31,9 +35,9 @@
 **Vision:** Version Guard is a **cloud-agnostic** version drift detection platform supporting multiple cloud providers.
 
 ### Phase 1 (Implemented): AWS
-- **Resources**: ✅ Aurora (RDS), ✅ EKS, 🔜 ElastiCache, 🔜 OpenSearch, 🔜 Lambda
-- **Inventory**: Wiz (cross-cloud) + AWS APIs
-- **EOL Data**: AWS native APIs (RDS, EKS) + endoflife.date (hybrid enrichment)
+- **Resources**: ✅ Aurora MySQL (production tested), ✅ Aurora PostgreSQL (config ready), ✅ EKS (production tested), ✅ ElastiCache (production tested), ✅ OpenSearch (production tested), 📋 RDS, 📋 Lambda
+- **Inventory**: Wiz saved reports (primary) + Custom sources (extensible)
+- **EOL Data**: endoflife.date API (404 graceful degradation for products not yet listed)
 
 **Architecture Impact:**
 - All resource types include `CloudProvider` field (AWS, GCP, Azure, etc.)
@@ -41,6 +45,54 @@
 - EOL providers are cloud-specific but share a common interface
 - Detectors are resource-specific, cloud-aware
 - gRPC API is cloud-agnostic (filters by cloud provider)
+
+---
+
+## Config-Driven Architecture
+
+**Key Innovation:** Version Guard uses a **declarative YAML configuration** approach that eliminates the need for custom code when adding new cloud resource types.
+
+### Benefits
+
+1. **Zero Code Changes**: Add resources by editing `config/resources.yaml` only
+2. **Reduced Duplication**: Single generic detector/inventory implementation
+3. **Better Testing**: Comprehensive test coverage on generic components
+4. **Single Source of Truth**: All resource definitions in one place
+5. **Scalable Configuration**: Single `WIZ_REPORT_IDS` JSON map for all resources
+6. **Multi-Cloud Ready**: AWS/GCP/Azure support built-in
+7. **Schema Flexibility**: Adapter pattern handles different EOL provider semantics
+
+### How It Works
+
+```yaml
+# config/resources.yaml
+resources:
+  - id: eks                          # Unique identifier
+    type: eks                        # Resource type
+    cloud_provider: aws              # Cloud provider (aws, gcp, azure)
+    inventory:
+      source: wiz                    # Inventory source
+      native_type_pattern: "cluster" # Wiz nativeType filter (supports wildcards)
+      field_mappings:                # Map Wiz CSV columns to resource fields
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date       # EOL data provider
+      product: amazon-eks            # endoflife.date product ID
+      schema: eks_adapter            # Schema adapter (standard or eks_adapter)
+```
+
+**Environment Variable:**
+```bash
+export WIZ_REPORT_IDS='{
+  "eks": "ea80a1a4-fd1d-4c8c-9a69-0726f626040b"
+}'
+```
+
+**Result:** The generic infrastructure automatically creates detectors, inventory sources, and EOL providers based on the config.
 
 ---
 
@@ -104,19 +156,25 @@ Version-Guard/
 │   ├── server/main.go                    # Server with Temporal worker + gRPC
 │   └── cli/main.go                       # CLI tool for operators
 │
+├── config/
+│   └── resources.yaml                    # Config-driven resource definitions
+│
 ├── pkg/
 │   ├── types/
 │   │   ├── resource.go                   # Core types: Resource, Finding
 │   │   ├── status.go                     # Status enum (Red/Yellow/Green)
 │   │   └── cloud.go                      # CloudProvider enum
 │   │
+│   ├── config/
+│   │   ├── types.go                      # Configuration schema
+│   │   └── loader.go                     # Config loader and validator
+│   │
 │   ├── inventory/
 │   │   ├── inventory.go                  # InventorySource interface
 │   │   ├── wiz/                          # Wiz implementation (multi-cloud)
-│   │   │   ├── aurora.go                 # AWS Aurora inventory
-│   │   │   ├── elasticache.go            # AWS ElastiCache inventory
-│   │   │   ├── eks.go                    # AWS EKS inventory
-│   │   │   └── client.go                 # Wiz HTTP client
+│   │   │   ├── generic.go                # Generic config-driven inventory source
+│   │   │   ├── client.go                 # Wiz HTTP client
+│   │   │   └── helpers.go                # CSV parsing, tag extraction
 │   │   └── mock/                         # Mock for tests
 │   │
 │   ├── eol/
@@ -126,7 +184,8 @@ Version-Guard/
 │   │   │   └── eks.go                    # AWS EKS EOL provider
 │   │   ├── endoflife/
 │   │   │   ├── client.go                 # endoflife.date HTTP client
-│   │   │   └── provider.go               # endoflife.date provider
+│   │   │   ├── provider.go               # endoflife.date provider
+│   │   │   └── adapters.go               # Schema adapters (standard, EKS)
 │   │   └── mock/                         # Mock for tests
 │   │
 │   ├── policy/
@@ -135,10 +194,8 @@ Version-Guard/
 │   │
 │   ├── detector/
 │   │   ├── detector.go                   # Detector interface
-│   │   ├── aurora/
-│   │   │   └── detector.go               # Aurora detector
-│   │   └── eks/
-│   │       └── detector.go               # EKS detector
+│   │   └── generic/
+│   │       └── detector.go               # Generic config-driven detector
 │   │
 │   ├── store/
 │   │   ├── store.go                      # Store interface
@@ -203,14 +260,12 @@ type InventorySource interface {
 ```
 
 **Implementations:**
-- `wiz.AuroraInventorySource` - Wiz saved reports for Aurora
-- `wiz.EKSInventorySource` - Wiz saved reports for EKS
+- `wiz.GenericInventorySource` - Config-driven Wiz saved reports (handles all resource types)
 - `mock.MockInventorySource` - For testing
 
 **How to extend:**
-1. Implement the `InventorySource` interface
-2. Register it in your server main
-3. Use it in detectors
+1. **Config-driven approach (recommended)**: Add resource to `config/resources.yaml` with field mappings
+2. **Custom implementation**: Implement the `InventorySource` interface for non-Wiz sources
 
 ### 2. EOLProvider
 
@@ -270,6 +325,10 @@ type Detector interface {
 }
 ```
 
+**Implementations:**
+- `generic.Detector` - Config-driven detector (handles all resource types defined in `config/resources.yaml`)
+- Custom detectors - For specialized detection logic
+
 **Pattern:**
 ```go
 func (d *Detector) Detect(ctx context.Context) ([]*Finding, error) {
@@ -297,6 +356,9 @@ func (d *Detector) Detect(ctx context.Context) ([]*Finding, error) {
     return findings, nil
 }
 ```
+
+**Config-Driven Approach:**
+The generic detector reads configuration from `config/resources.yaml` and automatically handles all configured resource types without code changes.
 
 ### 5. Store
 
@@ -646,90 +708,117 @@ make run-locally  # One-shot
 
 ## Adding a New Resource Type
 
-Step-by-step guide to adding support for a new resource type (e.g., Lambda):
+**With the config-driven approach, adding a new resource type requires ZERO code changes!**
 
-### 1. Define Resource Type
+Step-by-step guide to adding support for a new resource type (e.g., RDS PostgreSQL):
 
-```go
-// pkg/types/resource.go
-const ResourceTypeLambda ResourceType = "LAMBDA"
+### 1. Create a Wiz Saved Report
+
+In the Wiz console:
+1. Create a query for your resource type (e.g., RDS PostgreSQL instances)
+2. Save it as a report
+3. Copy the report ID from the URL
+
+### 2. Add Resource Configuration
+
+Edit `config/resources.yaml` and add ~15 lines:
+
+```yaml
+resources:
+  # ... existing resources ...
+
+  - id: rds-postgresql
+    type: rds
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "rds/PostgreSQL/instance"
+      field_mappings:
+        engine: "typeFields.engine"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: postgresql
+      schema: standard
 ```
 
-### 2. Create Inventory Source
+**Field Mappings:** Map Wiz CSV column names to resource fields.
 
-```go
-// pkg/inventory/wiz/lambda.go
-type LambdaInventorySource struct {
-    client   *Client
-    reportID string
-}
+**Native Type Pattern:** The Wiz `nativeType` to filter (supports wildcards like `elastiCache/*/cluster`).
 
-func (s *LambdaInventorySource) ListResources(ctx context.Context, resourceType ResourceType) ([]*Resource, error) {
-    // Fetch from Wiz saved report
-    // Parse CSV/JSON
-    // Convert to Resource structs
-    return resources, nil
-}
+**EOL Configuration:**
+- `provider`: Currently only `endoflife-date` supported
+- `product`: The endoflife.date product ID (e.g., `postgresql`, `amazon-eks`)
+- `schema`: Adapter for EOL data semantics (`standard` or `eks_adapter`)
+
+### 3. Add Report ID to Environment Variable
+
+Update the `WIZ_REPORT_IDS` JSON map:
+
+```bash
+export WIZ_REPORT_IDS='{
+  "aurora-mysql": "7bac4838-cf54-46c4-93a2-f63cced1735a",
+  "eks": "ea80a1a4-fd1d-4c8c-9a69-0726f626040b",
+  "elasticache-redis": "d8084ea6-cdcc-4ee7-bb46-067b52982c11",
+  "rds-postgresql": "your-new-report-id"
+}'
 ```
 
-### 3. Create or Use EOL Provider
+The key must match the `id` field in `resources.yaml`.
 
-```go
-// pkg/eol/aws/lambda.go (if AWS provides Lambda runtime EOL API)
-// OR use endoflife.Provider("nodejs", "python", etc.)
+### 4. Restart Server
+
+```bash
+./bin/version-guard
 ```
 
-### 4. Create Detector
+The server will automatically:
+- Load the new resource configuration
+- Create a generic detector for it
+- Include it in the orchestrator workflow
+- Start scanning on the next scheduled run
 
-```go
-// pkg/detector/lambda/detector.go
-type Detector struct {
-    inventory inventory.InventorySource
-    eol       eol.Provider
-    policy    policy.VersionPolicy
-    store     store.Store
-}
+### 5. Verify
 
-func (d *Detector) Detect(ctx context.Context) ([]*types.Finding, error) {
-    // 1. Fetch Lambda functions from inventory
-    // 2. For each function, get runtime EOL data
-    // 3. Apply policy
-    // 4. Store findings
-    return findings, nil
-}
+```bash
+# Check that the resource is registered
+./bin/version-guard-cli service list
+
+# Trigger a scan
+temporal workflow start \
+  --task-queue version-guard-detection \
+  --type OrchestratorWorkflow \
+  --input '{}'
+
+# Query findings
+./bin/version-guard-cli finding list --type rds
 ```
 
-### 5. Add Tests
+**That's it!** No Go code changes, no compilation, no new files.
+
+---
+
+### Advanced: Custom Inventory Source
+
+If you need a non-Wiz inventory source (e.g., direct AWS API calls):
 
 ```go
-// pkg/detector/lambda/detector_test.go
-func TestLambdaDetector_Detect(t *testing.T) {
-    // Use mocks for inventory, eol, store
-    // Verify findings are created correctly
+// pkg/inventory/custom/my_source.go
+type MyInventorySource struct {
+    // Your fields
 }
-```
 
-### 6. Register in Orchestrator
-
-```go
-// pkg/workflow/orchestrator/workflow.go
-resourceTypes := []types.ResourceType{
-    types.ResourceTypeAurora,
-    types.ResourceTypeEKS,
-    types.ResourceTypeLambda, // <-- Add here
+func (s *MyInventorySource) ListResources(ctx context.Context, resourceType ResourceType) ([]*Resource, error) {
+    // Your implementation
 }
-```
 
-### 7. Wire in Server
-
-```go
 // cmd/server/main.go
-detectors[types.ResourceTypeLambda] = lambda.NewDetector(
-    invSources[types.ResourceTypeLambda],
-    eolProviders[types.ResourceTypeLambda],
-    policyEngine,
-    st,
-)
+// Register your custom source
+invSources["my-resource"] = custom.NewMyInventorySource(...)
 ```
 
 ---

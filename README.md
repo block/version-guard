@@ -1,5 +1,7 @@
 # Version Guard
 
+> ⚠️ **Work in Progress / Experimental** — Version Guard is under active development. APIs, configuration formats, and behavior may change without notice. Use at your own risk in production environments.
+
 **Version Guard** is an open-source cloud infrastructure version monitoring system that continuously scans cloud resources (databases, caches, compute) to detect version drift and compliance issues.
 
 ## 🎯 Purpose
@@ -62,20 +64,25 @@ Version Guard implements a **two-stage detection pipeline**:
 
 ## 📦 Supported Resources
 
-| Resource | Inventory | EOL Source | Code | Status |
-|----------|-----------|------------|------|--------|
-| **EKS** (Kubernetes) | Wiz | [amazon-eks](https://endoflife.date/amazon-eks) | ✅ Implemented | ✅ Working |
-| **ElastiCache** (Redis/Valkey) | Wiz | [amazon-elasticache-redis](https://endoflife.date/amazon-elasticache-redis), [valkey](https://endoflife.date/valkey) | ✅ Implemented | ✅ Working |
-| **Aurora PostgreSQL** | Wiz | [amazon-aurora-postgresql](https://endoflife.date/amazon-aurora-postgresql) | ✅ Implemented | 🔜 Needs Wiz report with PostgreSQL data |
-| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ✅ Implemented | 🔜 EOL data pending [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) |
-| **RDS MySQL** | — | [amazon-rds-mysql](https://endoflife.date/amazon-rds-mysql) | ❌ Needs Wiz report | 📋 Planned |
-| **RDS PostgreSQL** | — | [amazon-rds-postgresql](https://endoflife.date/amazon-rds-postgresql) | ❌ Needs Wiz report | 📋 Planned |
-| **OpenSearch** | — | [amazon-opensearch](https://endoflife.date/amazon-opensearch) | ❌ Needs Wiz report | 📋 Planned |
-| **Lambda** | — | [aws-lambda](https://endoflife.date/aws-lambda) | ❌ Needs Wiz report | 📋 Planned |
+Version Guard uses a **config-driven approach** - resources are defined in `config/resources.yaml`:
 
-Adding a new resource type requires:
-1. A Wiz saved report + inventory source (~100 lines)
-2. One line in `ProductMapping` to map the engine name to endoflife.date
+| Resource | Inventory | EOL Source | Status |
+|----------|-----------|------------|--------|
+| **EKS** (Kubernetes) | Wiz | [amazon-eks](https://endoflife.date/amazon-eks) | ✅ Production tested |
+| **ElastiCache** (Redis/Valkey/Memcached) | Wiz | [amazon-elasticache-redis](https://endoflife.date/amazon-elasticache-redis), [valkey](https://endoflife.date/valkey) | ✅ Production tested |
+| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ⚠️ Production tested, EOL data pending [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) |
+| **Aurora PostgreSQL** | Wiz | [amazon-aurora-postgresql](https://endoflife.date/amazon-aurora-postgresql) | 🔜 Config ready, needs Wiz report ID |
+| **OpenSearch** | Wiz | [amazon-opensearch](https://endoflife.date/amazon-opensearch), [elasticsearch](https://endoflife.date/elasticsearch) | ✅ Production tested |
+| **RDS MySQL** | — | [amazon-rds-mysql](https://endoflife.date/amazon-rds-mysql) | 📋 Planned (add to config) |
+| **RDS PostgreSQL** | — | [amazon-rds-postgresql](https://endoflife.date/amazon-rds-postgresql) | 📋 Planned (add to config) |
+| **Lambda** | — | [aws-lambda](https://endoflife.date/aws-lambda) | 📋 Planned (add to config) |
+
+**Adding a new resource type requires:**
+1. A Wiz saved report for the resource type
+2. Adding ~15 lines to `config/resources.yaml`
+3. Adding the report ID to `WIZ_REPORT_IDS` environment variable
+
+**No code changes needed!** See [USAGE.md](./USAGE.md) for details.
 
 ## 🚀 Quick Start
 
@@ -110,9 +117,11 @@ docker compose up --build
 # With real Wiz inventory
 export WIZ_CLIENT_ID_SECRET="your-client-id"
 export WIZ_CLIENT_SECRET_SECRET="your-client-secret"
-export WIZ_EKS_REPORT_ID="your-report-id"
-export WIZ_AURORA_REPORT_ID="your-report-id"
-export WIZ_ELASTICACHE_REPORT_ID="your-report-id"
+export WIZ_REPORT_IDS='{
+  "aurora-mysql":"your-aurora-mysql-report-id",
+  "eks":"your-eks-report-id",
+  "elasticache-redis":"your-elasticache-report-id"
+}'
 docker compose up --build
 ```
 
@@ -122,7 +131,10 @@ docker compose up --build
 |---------|---------|------|
 | `temporal` | Workflow orchestration | `7233` (gRPC), `8233` (Web UI) |
 | `minio` | S3-compatible snapshot storage | `9000` (API), `9001` (Console) |
+| `endoflife` | Local EOL data override (nginx) | `8082` |
 | `version-guard` | The server | `8080` (gRPC) |
+
+The `endoflife` service serves patched EOL data for products with pending upstream PRs on [endoflife.date](https://endoflife.date), and proxies everything else to the live API. See [`deploy/endoflife-override/README.md`](./deploy/endoflife-override/README.md) for details on adding or updating overrides.
 
 Once running, open the Temporal Web UI at http://localhost:8233 to trigger and monitor workflows.
 
@@ -144,11 +156,13 @@ make dev
 # Or with real Wiz inventory (requires credentials)
 export WIZ_CLIENT_ID_SECRET="your-client-id"
 export WIZ_CLIENT_SECRET_SECRET="your-client-secret"
-export WIZ_AURORA_REPORT_ID="your-report-id"
+export WIZ_REPORT_IDS='{"aurora-mysql":"report-id","eks":"report-id","elasticache-redis":"report-id"}'
 make dev
 ```
 
 ### Trigger a Scan
+
+**Start a detection workflow:**
 
 ```bash
 # Via Temporal CLI (from inside the temporal container if using docker-compose)
@@ -160,6 +174,46 @@ docker compose exec temporal temporal workflow start \
   --namespace version-guard-dev
 
 # Or via the Temporal Web UI at http://localhost:8233 → Start Workflow
+```
+
+**Monitor workflow execution:**
+
+```bash
+# Check workflow status (replace WORKFLOW_ID with the ID from the start command)
+docker compose exec temporal temporal workflow describe \
+  --workflow-id <WORKFLOW_ID> \
+  --namespace version-guard-dev
+
+# Watch Version Guard logs in real-time
+docker compose logs --follow version-guard
+
+# View Temporal Web UI for detailed workflow execution
+# Open http://localhost:8233 → Workflows → Select your workflow
+```
+
+**Example successful workflow output:**
+```
+Status: COMPLETED
+Total Findings: 8,386 resources scanned
+Compliance: 45.36%
+Runtime: 29.35 seconds
+
+Resource Breakdown:
+- aurora: 4,257 findings
+- eks: 155 findings (65 GREEN, 90 YELLOW)
+- elasticache: 3,974 findings (3,739 GREEN, 138 YELLOW, 97 UNKNOWN)
+```
+
+**Verify snapshot creation:**
+
+Snapshots are stored in MinIO (local S3) at `s3://version-guard-snapshots/snapshots/YYYY/MM/DD/{workflow-id}.json`:
+
+```bash
+# List snapshots (from logs)
+docker compose logs version-guard | grep "Snapshot created"
+
+# Access MinIO Console to browse snapshots
+# Open http://localhost:9001 (default credentials: minioadmin/minioadmin)
 ```
 
 ### Query Findings
@@ -202,6 +256,9 @@ Version Guard is configured via environment variables or CLI flags:
 | `AWS_REGION` | AWS region (for S3 snapshots) | `us-west-2` |
 | `WIZ_CLIENT_ID_SECRET` | Wiz client ID (optional) | - |
 | `WIZ_CLIENT_SECRET_SECRET` | Wiz client secret (optional) | - |
+| `WIZ_REPORT_IDS` | JSON map of resource ID to Wiz report ID (optional) | - |
+| `EOL_BASE_URL` | Custom endoflife.date API base URL (optional) | `https://endoflife.date/api` |
+| `CONFIG_PATH` | Path to resources config file | `config/resources.yaml` |
 | `TAG_APP_KEYS` | Comma-separated AWS tag keys for app/service | `app,application,service` |
 | `TAG_ENV_KEYS` | Comma-separated AWS tag keys for environment | `environment,env` |
 | `TAG_BRAND_KEYS` | Comma-separated AWS tag keys for brand/business unit | `brand` |
@@ -220,6 +277,23 @@ export TAG_APP_KEYS="team,squad,application"
 ```
 
 The tag keys are tried in order — the first matching tag wins.
+
+**Wiz Report IDs:**
+
+Version Guard uses a single JSON map to configure all Wiz report IDs:
+
+```bash
+export WIZ_REPORT_IDS='{
+  "aurora-mysql": "7bac4838-cf54-46c4-93a2-f63cced1735a",
+  "eks": "ea80a1a4-fd1d-4c8c-9a69-0726f626040b",
+  "elasticache-redis": "d8084ea6-cdcc-4ee7-bb46-067b52982c11"
+}'
+```
+
+The keys correspond to resource IDs in `config/resources.yaml`. This approach:
+- ✅ Scales to dozens of resources without env var sprawl
+- ✅ Single environment variable to manage
+- ✅ Easy to add new resources (just add to JSON map)
 
 **Logging:**
 

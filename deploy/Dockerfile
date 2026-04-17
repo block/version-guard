@@ -12,5 +12,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 version-guard
 USER version-guard
 COPY --from=builder /version-guard /app/version-guard
+COPY --from=builder /src/config /app/config
+WORKDIR /app
 EXPOSE 8080
 ENTRYPOINT ["/app/version-guard"]

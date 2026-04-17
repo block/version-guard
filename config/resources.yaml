@@ -1,0 +1,152 @@
+version: v1
+resources:
+  - id: aurora-postgresql
+    type: aurora
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "rds/AmazonAuroraPostgreSQL/cluster"
+      field_mappings:
+        engine: "typeFields.kind"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-aurora-postgresql
+      schema: standard
+
+  - id: aurora-mysql
+    type: aurora
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "rds/AmazonAuroraMySQL/cluster"
+      field_mappings:
+        engine: "typeFields.kind"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-aurora-mysql
+      schema: standard
+
+  - id: eks
+    type: eks
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "cluster"
+      field_mappings:
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-eks
+      schema: eks_adapter
+
+  - id: elasticache-redis
+    type: elasticache
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "elastiCache/*/cluster"
+      field_mappings:
+        engine: "typeFields.kind"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: redis
+      schema: standard
+
+  - id: opensearch
+    type: opensearch
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "elasticSearchService|OpenSearch Domain"
+      field_mappings:
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-opensearch
+      schema: standard
+
+  # Add more resources using the add-version-guard-resource skill
+  #
+  # Configuration:
+  # 1. Add resource definitions below
+  # 2. Set WIZ_REPORT_IDS environment variable with JSON map of resource ID to report ID
+  #    Example: WIZ_REPORT_IDS='{"aurora-postgresql":"report-123","eks":"report-456"}'
+  #
+  # Example: Aurora PostgreSQL (Standard Schema)
+  # - id: aurora-postgresql
+  #   type: aurora
+  #   cloud_provider: aws
+  #   inventory:
+  #     source: wiz
+  #     native_type_pattern: "rds/AmazonAuroraPostgreSQL/cluster"
+  #     field_mappings:
+  #       engine: "typeFields.kind"
+  #       version: "versionDetails.version"
+  #       region: "region"
+  #       account_id: "cloudAccount.externalId"
+  #       name: "name"
+  #       external_id: "externalId"
+  #   eol:
+  #     provider: endoflife-date
+  #     product: amazon-aurora-postgresql
+  #     schema: standard
+  #
+  # Example: EKS (Non-Standard Schema)
+  # - id: eks
+  #   type: eks
+  #   cloud_provider: aws
+  #   inventory:
+  #     source: wiz
+  #     native_type_pattern: "eks/Cluster"
+  #     field_mappings:
+  #       version: "versionDetails.version"
+  #       region: "region"
+  #       account_id: "cloudAccount.externalId"
+  #       name: "name"
+  #       external_id: "externalId"
+  #   eol:
+  #     provider: endoflife-date
+  #     product: amazon-eks
+  #     schema: eks_adapter
+  #
+  # Example: ElastiCache Redis (Standard Schema)
+  # - id: elasticache-redis
+  #   type: elasticache
+  #   cloud_provider: aws
+  #   inventory:
+  #     source: wiz
+  #     native_type_pattern: "elastiCache/Redis/cluster"
+  #     field_mappings:
+  #       engine: "typeFields.kind"
+  #       version: "versionDetails.version"
+  #       region: "region"
+  #       account_id: "cloudAccount.externalId"
+  #       name: "name"
+  #       external_id: "externalId"
+  #   eol:
+  #     provider: endoflife-date
+  #     product: amazon-elasticache-redis
+  #     schema: standard
