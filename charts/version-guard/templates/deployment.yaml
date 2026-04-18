@@ -42,6 +42,10 @@ spec:
           env:
             - name: GRPC_PORT
               value: {{ .Values.containerPort | quote }}
+            {{- if .Values.eolBaseUrl }}
+            - name: EOL_BASE_URL
+              value: {{ .Values.eolBaseUrl | quote }}
+            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -19,6 +19,10 @@ service:
   type: ClusterIP
   port: 8080
 
+# Custom base URL for endoflife.date API (e.g., http://127.0.0.1:8082/api for sidecar proxy).
+# Rendered as a standalone env var so it survives env list overrides.
+eolBaseUrl: ""
+
 env: []
 
 resources:
