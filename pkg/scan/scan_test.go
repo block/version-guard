@@ -116,6 +116,17 @@ func TestTrigger_Run_ReturnsErrorWhenTaskQueueMissing(t *testing.T) {
 	assert.False(t, mock.called, "ExecuteWorkflow must not be called with empty task queue")
 }
 
+func TestNewTrigger_WiresClientAsStarter(t *testing.T) {
+	// client.Client satisfies the Starter interface; NewTrigger is a thin
+	// constructor that stores it. Passing nil is enough to exercise the line —
+	// we only assert the fields are wired.
+	tr := NewTrigger(nil, "version-guard-orchestrator")
+
+	require.NotNil(t, tr)
+	assert.Equal(t, "version-guard-orchestrator", tr.taskQueue)
+	assert.Nil(t, tr.starter, "nil client should pass through as nil Starter")
+}
+
 func TestTrigger_Run_PropagatesStarterError(t *testing.T) {
 	wantErr := errors.New("temporal unavailable")
 	mock := &mockStarter{err: wantErr}
