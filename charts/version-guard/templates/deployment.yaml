@@ -39,9 +39,14 @@ spec:
             - name: grpc
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
+            - name: http-admin
+              containerPort: {{ .Values.adminPort }}
+              protocol: TCP
           env:
             - name: GRPC_PORT
               value: {{ .Values.containerPort | quote }}
+            - name: HTTP_PORT
+              value: {{ .Values.adminPort | quote }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

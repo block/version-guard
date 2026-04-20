@@ -12,5 +12,9 @@ spec:
       targetPort: grpc
       protocol: TCP
       name: grpc
+    - port: {{ .Values.service.adminPort }}
+      targetPort: http-admin
+      protocol: TCP
+      name: http-admin
   selector:
     {{- include "version-guard.selectorLabels" . | nindent 4 }}
