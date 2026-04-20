@@ -1,0 +1,25 @@
+# Example: Aurora PostgreSQL (Standard Schema)
+# This is the config for Test 1 - used for testing the skill
+#
+# IMPORTANT: The resource 'id' is used to look up the Wiz report ID
+# in the WIZ_REPORT_IDS JSON map environment variable.
+#
+# Example: WIZ_REPORT_IDS='{"aurora-postgresql":"report-id-here"}'
+
+  - id: aurora-postgresql
+    type: aurora
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "rds/AmazonAuroraPostgreSQL/cluster"
+      field_mappings:
+        engine: "typeFields.kind"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-aurora-postgresql
+      schema: standard  # Standard schema

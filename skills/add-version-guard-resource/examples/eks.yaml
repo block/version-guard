@@ -1,0 +1,26 @@
+# Example: EKS (Non-Standard Schema)
+# This is an example of a resource using NON-STANDARD endoflife.date schema
+# EKS uses cycle.eol to mean "end of extended support" NOT "true EOL"
+# Requires custom adapter: eks_adapter
+#
+# IMPORTANT: The resource 'id' is used to look up the Wiz report ID
+# in the WIZ_REPORT_IDS JSON map environment variable.
+#
+# Example: WIZ_REPORT_IDS='{"eks":"report-id-here"}'
+
+  - id: eks
+    type: eks
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "cluster"
+      field_mappings:
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-eks
+      schema: eks_adapter  # Non-standard! cycle.eol → ExtendedSupportEnd (NOT EOLDate)

@@ -62,6 +62,39 @@ Version Guard implements a **two-stage detection pipeline**:
 - ✅ **Local Development**: Full docker-compose setup with MinIO (S3) and Temporal
 - ✅ **Extensible Architecture**: Plugin your own emitters for issue tracking, dashboards, notifications
 
+## 🤖 AI Skills for Resource Management
+
+Version Guard includes AI agent skills that automate common tasks. No manual configuration editing required — AI agents can autonomously add and manage resources.
+
+### add-version-guard-resource Skill
+
+Autonomously add new cloud resource types to Version Guard using any AI agent (Claude Code, Goose, Amp, etc.).
+
+**What it does:**
+- Queries [endoflife.date](https://endoflife.date) API to validate EOL data coverage
+- Auto-detects Wiz CSV schema from existing test fixtures
+- Generates `config/resources.yaml` entries with proper field mappings
+- Runs tests to verify configuration works
+- Creates properly formatted git commits
+
+**Quick Start:**
+```bash
+# With Claude Code (when in this repository)
+claude "Use the add-version-guard-resource skill to add OpenSearch support"
+
+# With Goose
+sq agents skills add skills/add-version-guard-resource
+goose "Add OpenSearch to Version Guard"
+```
+
+**Time saved**: ~30-60 minutes per resource type reduced to 2-3 minutes of autonomous execution.
+
+📖 **See [SKILLS.md](SKILLS.md) for comprehensive documentation**, including:
+- Installation for different AI platforms
+- Detailed usage examples (OpenSearch, Aurora PostgreSQL, EKS)
+- Troubleshooting guide
+- Creating your own skills
+
 ## 📦 Supported Resources
 
 Version Guard uses a **config-driven approach** - resources are defined in `config/resources.yaml`:
@@ -324,9 +357,9 @@ Version Guard uses a single JSON map to configure all Wiz report IDs:
 
 ```bash
 export WIZ_REPORT_IDS='{
-  "aurora-mysql": "7bac4838-cf54-46c4-93a2-f63cced1735a",
-  "eks": "ea80a1a4-fd1d-4c8c-9a69-0726f626040b",
-  "elasticache-redis": "d8084ea6-cdcc-4ee7-bb46-067b52982c11"
+  "aurora-mysql": "your-aurora-mysql-report-id",
+  "eks": "your-eks-report-id",
+  "elasticache-redis": "your-elasticache-report-id"
 }'
 ```
 

@@ -88,7 +88,7 @@ resources:
 **Environment Variable:**
 ```bash
 export WIZ_REPORT_IDS='{
-  "eks": "ea80a1a4-fd1d-4c8c-9a69-0726f626040b"
+  "eks": "your-eks-report-id"
 }'
 ```
 
@@ -721,9 +721,9 @@ Update the `WIZ_REPORT_IDS` JSON map:
 
 ```bash
 export WIZ_REPORT_IDS='{
-  "aurora-mysql": "7bac4838-cf54-46c4-93a2-f63cced1735a",
-  "eks": "ea80a1a4-fd1d-4c8c-9a69-0726f626040b",
-  "elasticache-redis": "d8084ea6-cdcc-4ee7-bb46-067b52982c11",
+  "aurora-mysql": "your-aurora-mysql-report-id",
+  "eks": "your-eks-report-id",
+  "elasticache-redis": "your-elasticache-report-id",
   "rds-postgresql": "your-new-report-id"
 }'
 ```
