@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/pkg/errors"
 
-	"github.com/block/Version-Guard/pkg/registry"
 	"github.com/block/Version-Guard/pkg/types"
 )
 
@@ -269,72 +266,4 @@ func isCommonSuffix(s string) bool {
 		}
 	}
 	return false
-}
-
-// parseAWSResourceRow is a shared parser for Aurora and ElastiCache CSV rows.
-// Both resource types have identical parsing logic, differing only in the
-// engine normalizer function and the resource type constant.
-func parseAWSResourceRow(
-	ctx context.Context,
-	cols columnIndex,
-	row []string,
-	resourceType types.ResourceType,
-	normalizeEngine func(string) string,
-	tagConfig *TagConfig,
-	registryClient registry.Client,
-) (*types.Resource, error) {
-	resourceARN, err := cols.require(row, colHeaderExternalID)
-	if err != nil {
-		return nil, fmt.Errorf("missing ARN")
-	}
-
-	parsedARN, err := arn.Parse(resourceARN)
-	if err != nil {
-		return nil, errors.Wrapf(err, "invalid ARN: %s", resourceARN)
-	}
-
-	resourceName := cols.col(row, colHeaderName)
-	accountID := cols.col(row, colHeaderAccountID)
-	if accountID == "" {
-		accountID = parsedARN.AccountID
-	}
-
-	engine := normalizeEngine(cols.col(row, colHeaderEngineKind))
-	version := cols.col(row, colHeaderVersion)
-	region := cols.col(row, colHeaderRegion)
-
-	tagsJSON := cols.col(row, colHeaderTags)
-	tags, err := ParseTags(tagsJSON)
-	if err != nil {
-		tags = make(map[string]string)
-	}
-
-	service := tagConfig.GetAppTag(tags)
-	if service == "" {
-		if registryClient != nil {
-			if serviceInfo, err := registryClient.GetServiceByAWSAccount(ctx, accountID, region); err == nil {
-				service = serviceInfo.ServiceName
-			}
-		}
-		if service == "" {
-			service = extractServiceFromName(resourceName)
-		}
-	}
-
-	brand := tagConfig.GetBrandTag(tags)
-
-	return &types.Resource{
-		ID:             resourceARN,
-		Name:           resourceName,
-		Type:           resourceType,
-		CloudProvider:  types.CloudProviderAWS,
-		Service:        service,
-		CloudAccountID: accountID,
-		CloudRegion:    region,
-		Brand:          brand,
-		CurrentVersion: version,
-		Engine:         engine,
-		Tags:           tags,
-		DiscoveredAt:   time.Now(),
-	}, nil
 }
