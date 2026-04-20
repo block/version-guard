@@ -1,0 +1,25 @@
+# Example: ElastiCache Redis (Standard Schema)
+# This is an example of a resource using standard endoflife.date schema
+#
+# IMPORTANT: The resource 'id' is used to look up the Wiz report ID
+# in the WIZ_REPORT_IDS JSON map environment variable.
+#
+# Example: WIZ_REPORT_IDS='{"elasticache-redis":"report-id-here"}'
+
+  - id: elasticache-redis
+    type: elasticache
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "elastiCache/*/cluster"
+      field_mappings:
+        engine: "typeFields.kind"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: redis
+      schema: standard  # Standard schema: cycle.support → DeprecationDate, cycle.eol → EOLDate

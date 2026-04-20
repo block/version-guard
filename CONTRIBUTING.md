@@ -134,9 +134,40 @@ func TestDetector_Detect(t *testing.T) {
 - Require actual external dependencies (Wiz, AWS, etc.)
 - Document setup requirements
 
-## Adding a New Resource Type
+## Using AI Skills to Add Resources
 
-To add support for a new resource type:
+**Recommended approach**: Version Guard includes AI agent skills that automate adding new cloud resource types. No manual configuration editing required.
+
+### Quick Start with AI Skills
+
+```bash
+# With any AI agent that supports Agent Skills (Claude Code, Goose, Amp)
+claude "Use the add-version-guard-resource skill to add OpenSearch support"
+```
+
+The AI agent will autonomously:
+1. ✅ Validate product has EOL data on [endoflife.date](https://endoflife.date)
+2. 📝 Gather required inputs (resource ID, Wiz report ID, display name)
+3. 🔍 Auto-detect Wiz CSV schema from existing test fixtures
+4. ⚙️ Generate `config/resources.yaml` entry with proper field mappings
+5. 🧪 Run tests to verify configuration works
+6. 📦 Create properly formatted git commit
+
+**Time saved**: ~30-60 minutes of manual work reduced to 2-3 minutes.
+
+### Detailed Documentation
+
+See [SKILLS.md](SKILLS.md) for:
+- Installation instructions for different AI platforms
+- Detailed usage examples (OpenSearch, Aurora PostgreSQL, EKS)
+- Troubleshooting guide
+- Creating your own skills
+
+---
+
+## Adding a New Resource Type (Manual Process)
+
+If you prefer to add resources manually (or AI skills are not available), follow these steps:
 
 1. **Define the resource type** in `pkg/types/resource.go`:
    ```go
