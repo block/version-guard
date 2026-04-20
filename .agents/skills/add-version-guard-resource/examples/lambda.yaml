@@ -1,0 +1,26 @@
+# Example: Lambda (Runtime Detection)
+# Lambda is special — runtime is extracted from graphEntity.properties JSON
+# instead of versionDetails.version. Container-image Lambdas (no runtime)
+# are automatically skipped since AWS doesn't EOL them.
+#
+# IMPORTANT: The resource 'id' is used to look up the Wiz report ID
+# in the WIZ_REPORT_IDS JSON map environment variable.
+#
+# Example: WIZ_REPORT_IDS='{"lambda":"report-id-here"}'
+
+  - id: lambda
+    type: lambda
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "lambda"
+      field_mappings:
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+        # Note: no "version" or "engine" mapping — Lambda uses graphEntity.properties
+    eol:
+      provider: endoflife-date
+      product: aws-lambda
+      schema: standard
