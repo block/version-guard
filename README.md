@@ -82,9 +82,8 @@ Autonomously add new cloud resource types to Version Guard using any AI agent (C
 # With Claude Code (when in this repository)
 claude "Use the add-version-guard-resource skill to add OpenSearch support"
 
-# With Goose
-sq agents skills add skills/add-version-guard-resource
-goose "Add OpenSearch to Version Guard"
+# With Amp (when in this repository)
+amp "Add OpenSearch to Version Guard"
 ```
 
 **Time saved**: ~30-60 minutes per resource type reduced to 2-3 minutes of autonomous execution.

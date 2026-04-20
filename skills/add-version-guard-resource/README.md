@@ -23,7 +23,6 @@ Enables AI agents to automatically add new cloud resource types to Version Guard
 add-version-guard-resource/
 ├── SKILL.md                           # Main skill instructions (AI agent reads this)
 ├── SETUP.md                           # Prerequisites and installation
-├── OWNERS.yaml                        # Review routing
 ├── examples/
 │   ├── elasticache.yaml               # Standard schema example
 │   ├── eks.yaml                       # Non-standard schema example

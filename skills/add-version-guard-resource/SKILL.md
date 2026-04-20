@@ -42,7 +42,7 @@ Before starting, verify you're in the Version Guard repository and infrastructur
 
 ```bash
 # 1. Check current directory
-pwd  # Should be in oss-Version-Guard repo
+pwd  # Should be in the Version-Guard repo
 
 # 2. Verify generic infrastructure exists
 test -f config/resources.yaml && echo "✅ Config schema exists" || echo "❌ Missing - see SETUP.md"
