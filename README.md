@@ -51,7 +51,7 @@ Version Guard implements a **two-stage detection pipeline**:
 - **EOL Data**: [endoflife.date](https://endoflife.date) API — no cloud provider credentials needed
 - **Classification**: Red (EOL/deprecated), Yellow (extended support/approaching EOL), Green (current)
 - **S3 Snapshots**: Versioned JSON storage for audit trail and downstream consumption
-- **gRPC API**: Query interface for compliance dashboards
+- **HTTP Admin API**: Trigger scans and query status
 
 ## ✨ Features
 
@@ -132,7 +132,7 @@ docker compose up --build
 | `temporal` | Workflow orchestration | `7233` (gRPC), `8233` (Web UI) |
 | `minio` | S3-compatible snapshot storage | `9000` (API), `9001` (Console) |
 | `endoflife` | Local EOL data override (nginx) | `8082` |
-| `version-guard` | The server | `8080` (gRPC), `8081` (HTTP admin) |
+| `version-guard` | The server | `8081` (HTTP admin) |
 
 The `endoflife` service serves patched EOL data for products with pending upstream PRs on [endoflife.date](https://endoflife.date), and proxies everything else to the live API. See [`deploy/endoflife-override/README.md`](./deploy/endoflife-override/README.md) for details on adding or updating overrides.
 
@@ -238,11 +238,6 @@ docker compose logs version-guard | grep "Snapshot created"
 ### Query Findings
 
 ```bash
-# Using gRPC
-grpcurl -plaintext localhost:8080 list
-grpcurl -plaintext localhost:8080 \
-  block.versionguard.VersionGuard/GetFleetSummary
-
 # Using the CLI
 ./bin/version-guard-cli service list
 ./bin/version-guard-cli finding list
@@ -270,7 +265,6 @@ Version Guard is configured via environment variables or CLI flags:
 |----------|-------------|---------|
 | `TEMPORAL_ENDPOINT` | Temporal server address | `localhost:7233` |
 | `TEMPORAL_NAMESPACE` | Temporal namespace | `version-guard-dev` |
-| `GRPC_PORT` | gRPC service port | `8080` |
 | `HTTP_PORT` | HTTP admin port (`POST /scan`) | `8081` |
 | `S3_BUCKET` | S3 bucket for snapshots | `version-guard-snapshots` |
 | `AWS_REGION` | AWS region (for S3 snapshots) | `us-west-2` |
@@ -442,24 +436,6 @@ s3://your-bucket/snapshots/latest.json
 - AWS Lambda triggered on S3 events
 - Scheduled cron job reading `latest.json`
 - Custom Temporal workflow (implement `Stage 3: ACT`)
-
-### 3. Using the gRPC API
-
-Version Guard exposes a gRPC API for querying compliance data:
-
-```bash
-# List services and their compliance scores
-grpcurl -plaintext localhost:8080 \
-  block.versionguard.VersionGuard/GetFleetSummary
-
-# Get specific service score
-grpcurl -plaintext -d '{"service":"my-service"}' \
-  localhost:8080 block.versionguard.VersionGuard/GetServiceScore
-
-# List all RED/YELLOW findings
-grpcurl -plaintext -d '{"status":"red"}' \
-  localhost:8080 block.versionguard.VersionGuard/ListFindings
-```
 
 ## 📖 Documentation
 

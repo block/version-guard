@@ -13,12 +13,10 @@ serviceAccount:
 # Additional pod annotations (e.g. for service mesh sidecar configuration)
 podAnnotations: {}
 
-containerPort: 8080
 adminPort: 8081
 
 service:
   type: ClusterIP
-  port: 8080
   adminPort: 8081
 
 env: []

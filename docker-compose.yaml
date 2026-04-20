@@ -69,5 +69,4 @@ services:
       SCHEDULE_ID: ${SCHEDULE_ID:-version-guard-scan}
       SCHEDULE_JITTER: ${SCHEDULE_JITTER:-5m}
     ports:
-      - "8080:8080"
       - "8081:8081"

@@ -69,7 +69,6 @@ type ServerCLI struct {
 	S3Endpoint string `help:"Custom S3 endpoint (for MinIO/local dev)" env:"S3_ENDPOINT"`
 
 	// Service configuration
-	GRPCPort int `help:"gRPC service port" default:"8080" env:"GRPC_PORT"`
 	HTTPPort int `help:"HTTP admin port (POST /scan)" default:"8081" env:"HTTP_PORT"`
 
 	// Tag configuration (comma-separated lists for AWS resource tags)
@@ -132,7 +131,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	fmt.Printf("  Version: %s\n", version)
 	fmt.Printf("  Temporal Endpoint: %s\n", s.TemporalEndpoint)
 	fmt.Printf("  Temporal Namespace: %s\n", s.TemporalNamespace)
-	fmt.Printf("  gRPC Port: %d\n", s.GRPCPort)
 	fmt.Printf("  S3 Bucket: %s\n", s.S3Bucket)
 
 	if s.Verbose {
@@ -297,31 +295,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	}
 	fmt.Printf("\n✓ Total detectors initialized: %d\n", len(detectors))
 
-	// Start gRPC server
-	// Note: gRPC server requires protobuf code generation first.
-	// Run `make protos` to generate the gRPC service code, then uncomment below:
-	//nolint:gocritic // Intentionally commented - template for future gRPC implementation
-	/*
-		grpcServer := grpc.NewServer()
-		vgService := grpcservice.NewService(st)
-		// Register service using generated proto code:
-		// pb.RegisterVersionGuardServiceServer(grpcServer, vgService)
-		reflection.Register(grpcServer) // Enable gRPC reflection for debugging
-
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.GRPCPort))
-		if err != nil {
-			return fmt.Errorf("failed to listen on port %d: %w", s.GRPCPort, err)
-		}
-
-		go func() {
-			fmt.Printf("✓ gRPC server listening on :%d\n", s.GRPCPort)
-			if err := grpcServer.Serve(listener); err != nil {
-				fmt.Printf("gRPC server error: %v\n", err)
-			}
-		}()
-	*/
-	fmt.Println("⚠️  gRPC server disabled (run 'make protos' to generate proto code)")
-
 	// Create Temporal worker
 	w := worker.New(temporalClient, s.TemporalTaskQueue, worker.Options{
 		EnableSessionWorker: true,
@@ -382,8 +355,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	}
 	fmt.Println("\n📖 To trigger a scan manually, use the Temporal UI or CLI:")
 	fmt.Printf("   temporal workflow start --task-queue %s --type %s --input '{}'\n", s.TemporalTaskQueue, orchestrator.OrchestratorWorkflowType)
-	fmt.Println("\n📖 To query findings via gRPC:")
-	fmt.Printf("   grpcurl -plaintext localhost:%d list\n", s.GRPCPort)
 	fmt.Println("\n📖 For more information, see the README.md")
 	fmt.Println("\nPress Ctrl+C to stop...")
 
@@ -405,8 +376,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("HTTP server shutdown error: %v\n", err)
 	}
 
-	//nolint:gocritic // Intentionally commented - template for future gRPC implementation
-	// grpcServer.GracefulStop() // Uncomment when gRPC server is enabled
 	fmt.Println("✓ Shutdown complete")
 
 	return nil
