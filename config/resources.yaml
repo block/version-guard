@@ -88,6 +88,24 @@ resources:
       product: amazon-opensearch
       schema: standard
 
+  - id: rds-mysql
+    type: rds
+    cloud_provider: aws
+    inventory:
+      source: wiz
+      native_type_pattern: "rds/MySQL/instance"
+      field_mappings:
+        engine: "typeFields.kind"
+        version: "versionDetails.version"
+        region: "region"
+        account_id: "cloudAccount.externalId"
+        name: "name"
+        external_id: "externalId"
+    eol:
+      provider: endoflife-date
+      product: amazon-rds-mysql
+      schema: standard
+
   - id: rds-postgresql
     type: rds
     cloud_provider: aws
