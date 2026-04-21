@@ -74,6 +74,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 			"eks",
 			"elasticache-redis",
 			"opensearch",
+			"rds-postgresql",
 			"lambda",
 		}
 	}
