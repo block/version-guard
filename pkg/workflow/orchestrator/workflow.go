@@ -32,6 +32,8 @@ type WorkflowInput struct {
 }
 
 // WorkflowOutput contains the results of the orchestrator workflow
+//
+//nolint:govet // field alignment sacrificed for logical grouping
 type WorkflowOutput struct {
 	ScanID               string
 	SnapshotID           string
@@ -44,6 +46,8 @@ type WorkflowOutput struct {
 }
 
 // ResourceTypeResult contains the result for a single resource type scan
+//
+//nolint:govet // field alignment sacrificed for logical grouping
 type ResourceTypeResult struct {
 	ResourceType   types.ResourceType
 	FindingsCount  int
@@ -58,6 +62,13 @@ type ResourceTypeResult struct {
 // OrchestratorWorkflow is the main workflow that orchestrates the three-stage pipeline:
 // Stage 1: Detect - Fan out across resource types in parallel
 // Stage 2: Store - Write classified findings to S3 as versioned snapshot
+//
+// Name note: revive flags this as a stutter (orchestrator.OrchestratorWorkflow),
+// but Temporal's RegisterWorkflow derives the registered workflow type from the
+// Go function name. Renaming would change the on-the-wire workflow type and
+// invalidate any persisted workflow histories.
+//
+//nolint:revive // see comment above; rename would be a Temporal wire-format break
 func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
 

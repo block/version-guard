@@ -52,6 +52,7 @@ type DetectInput struct {
 	VersionLifecycles map[string]*types.VersionLifecycle
 }
 
+//nolint:govet // field alignment sacrificed for logical grouping
 type DetectResult struct {
 	FindingsBatchID string
 	FindingsCount   int

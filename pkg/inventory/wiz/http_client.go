@@ -54,6 +54,7 @@ type accessTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
+//nolint:govet // JSON field order chosen for readability of wire payload
 type graphQLRequest struct {
 	Query     string         `json:"query"`
 	Variables map[string]any `json:"variables"`

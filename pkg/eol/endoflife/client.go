@@ -38,6 +38,8 @@ type Client interface {
 
 // ProductCycle represents a single version/cycle from endoflife.date API
 // API docs: https://endoflife.date/docs/api/
+//
+//nolint:govet // field order matches endoflife.date API response shape for readability
 type ProductCycle struct {
 	Cycle             string `json:"cycle"`             // Version identifier (e.g., "1.31")
 	ReleaseDate       string `json:"releaseDate"`       // Release date (YYYY-MM-DD)

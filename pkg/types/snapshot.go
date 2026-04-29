@@ -3,6 +3,8 @@ package types
 import "time"
 
 // Snapshot represents a versioned point-in-time view of all findings
+//
+//nolint:govet // field order is the v2 wire format; reordering would change JSON key order
 type Snapshot struct {
 	// Metadata
 	SnapshotID      string    `json:"snapshot_id"`
@@ -20,6 +22,8 @@ type Snapshot struct {
 }
 
 // SnapshotSummary provides aggregate statistics across all resource types
+//
+//nolint:govet // field order is the v2 wire format; reordering would change JSON key order
 type SnapshotSummary struct {
 	TotalResources       int                           `json:"total_resources"`
 	RedCount             int                           `json:"red_count"`

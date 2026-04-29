@@ -15,6 +15,7 @@ func TestWorkflowInput_DefaultResourceTypes(t *testing.T) {
 	}
 
 	// Test that empty resource types will be populated by workflow
+	assert.Equal(t, "test-scan-1", input.ScanID)
 	assert.Empty(t, input.ResourceTypes)
 }
 
@@ -51,5 +52,7 @@ func TestResourceTypeResult_Structure(t *testing.T) {
 	assert.Equal(t, 5, result.RedCount)
 	assert.Equal(t, 10, result.YellowCount)
 	assert.Equal(t, 35, result.GreenCount)
+	assert.Equal(t, 0, result.UnknownCount)
+	assert.Equal(t, int64(5000), result.DurationMillis)
 	assert.Empty(t, result.Error)
 }
