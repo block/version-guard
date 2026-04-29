@@ -17,7 +17,10 @@ import (
 
 func newTestHandler(t *testing.T, mock *mockStarter) *Handler {
 	t.Helper()
-	return NewHandler(NewTriggerWithStarter(mock, "version-guard-orchestrator"))
+	// Provide a default so empty-body POSTs (full-fleet scan) succeed —
+	// the orchestrator workflow now rejects empty ResourceTypes.
+	defaults := []types.ResourceType{"aurora-mysql"}
+	return NewHandler(NewTriggerWithStarter(mock, "version-guard-orchestrator", defaults))
 }
 
 func TestHandler_POST_EmptyBody_TriggersFullScan(t *testing.T) {

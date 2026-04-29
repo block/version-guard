@@ -33,20 +33,25 @@ type Starter interface {
 
 // Trigger starts an OrchestratorWorkflow execution on demand.
 type Trigger struct {
-	starter   Starter
-	taskQueue string
+	starter              Starter
+	taskQueue            string
+	defaultResourceTypes []types.ResourceType
 }
 
 // NewTrigger returns a Trigger backed by the given Temporal client.
 // taskQueue must be the task queue the orchestrator worker is listening on.
-func NewTrigger(c client.Client, taskQueue string) *Trigger {
-	return &Trigger{starter: c, taskQueue: taskQueue}
+// defaultResourceTypes is the list used when the caller does not specify
+// any (e.g. a full-fleet scan via empty HTTP body); supply it from the
+// loaded YAML config so adding a resource is a YAML-only change.
+func NewTrigger(c client.Client, taskQueue string, defaultResourceTypes []types.ResourceType) *Trigger {
+	return &Trigger{starter: c, taskQueue: taskQueue, defaultResourceTypes: defaultResourceTypes}
 }
 
 // NewTriggerWithStarter returns a Trigger backed by an explicit Starter
-// (used for testing).
-func NewTriggerWithStarter(s Starter, taskQueue string) *Trigger {
-	return &Trigger{starter: s, taskQueue: taskQueue}
+// (used for testing). defaultResourceTypes may be nil if every test path
+// supplies an explicit list.
+func NewTriggerWithStarter(s Starter, taskQueue string, defaultResourceTypes []types.ResourceType) *Trigger {
+	return &Trigger{starter: s, taskQueue: taskQueue, defaultResourceTypes: defaultResourceTypes}
 }
 
 // Input controls the scope of a manual scan.
@@ -78,6 +83,19 @@ func (t *Trigger) Run(ctx context.Context, in Input) (Result, error) {
 		scanID = uuid.NewString()
 	}
 
+	// Empty caller list means "full fleet scan" — fall back to the
+	// configured default. The orchestrator workflow rejects empty
+	// ResourceTypes (see orchestrator.ErrNoResourceTypes), so this is
+	// the contract boundary that translates "no body / full scan"
+	// into the YAML-derived list.
+	resourceTypes := in.ResourceTypes
+	if len(resourceTypes) == 0 {
+		resourceTypes = t.defaultResourceTypes
+	}
+	if len(resourceTypes) == 0 {
+		return Result{}, fmt.Errorf("scan: no resource types to scan and no default configured")
+	}
+
 	workflowID := buildWorkflowID(scanID)
 
 	opts := client.StartWorkflowOptions{
@@ -88,7 +106,7 @@ func (t *Trigger) Run(ctx context.Context, in Input) (Result, error) {
 
 	run, err := t.starter.ExecuteWorkflow(ctx, opts, orchestrator.OrchestratorWorkflow, orchestrator.WorkflowInput{
 		ScanID:        scanID,
-		ResourceTypes: in.ResourceTypes,
+		ResourceTypes: resourceTypes,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("scan: execute workflow: %w", err)

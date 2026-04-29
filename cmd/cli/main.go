@@ -209,7 +209,11 @@ func (c *ScanStartCmd) Run(ctx *Context) error {
 		resourceTypes = append(resourceTypes, types.ResourceType(rt))
 	}
 
-	trigger := scan.NewTrigger(temporalClient, ctx.TemporalTaskQueue)
+	// CLI does not load resources.yaml — the user is expected to pass
+	// --resource-type explicitly. An empty list propagates to the
+	// orchestrator, which rejects it with ErrNoResourceTypes so the
+	// caller gets an immediate, descriptive failure.
+	trigger := scan.NewTrigger(temporalClient, ctx.TemporalTaskQueue, nil)
 	res, err := trigger.Run(context.Background(), scan.Input{
 		ScanID:        c.ScanID,
 		ResourceTypes: resourceTypes,
