@@ -141,15 +141,117 @@ func TestStandardSchemaAdapter_FalseBooleans(t *testing.T) {
 	assert.False(t, lifecycle.IsDeprecated)
 }
 
-func TestEKSSchemaAdapter_CurrentVersion(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+// TestStandardSchemaAdapter_AWSPattern_InExtendedSupport pins the
+// amazon-elasticache-redis cycle 5/6 shape: no `support` field,
+// `eol` is the end of standard support (NOT terminal), and
+// `extendedSupport` is the real terminal date. A version past `eol`
+// but before `extendedSupport` must classify as in-extended-support
+// (YELLOW), not EOL (RED).
+func TestStandardSchemaAdapter_AWSPattern_InExtendedSupport(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
+
+	pastYear := time.Now().Year() - 1
+	futureYear := time.Now().Year() + 2
+	cycle := &ProductCycle{
+		Cycle:           "5",
+		ReleaseDate:     "2018-10-17",
+		EOL:             time.Date(pastYear, 1, 31, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),   // standard-support end (past)
+		ExtendedSupport: time.Date(futureYear, 1, 31, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), // extended-support end (future)
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.True(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+	assert.True(t, lifecycle.IsExtendedSupport)
+	assert.False(t, lifecycle.IsEOL)
+	// True EOL = end of extended support, not the renamed `eol`.
+	assert.NotNil(t, lifecycle.EOLDate)
+	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
+	assert.Equal(t, *lifecycle.EOLDate, *lifecycle.ExtendedSupportEnd)
+	// DeprecationDate = `eol` (since there's no `support` field).
+	assert.NotNil(t, lifecycle.DeprecationDate)
+}
+
+// TestStandardSchemaAdapter_AWSPattern_PastExtendedSupport: same shape
+// as above but past extendedSupport too — true EOL.
+func TestStandardSchemaAdapter_AWSPattern_PastExtendedSupport(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
+
+	cycle := &ProductCycle{
+		Cycle:           "3",
+		EOL:             "2020-01-31", // standard-support end (past)
+		ExtendedSupport: "2023-01-31", // extended-support end (past)
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.True(t, lifecycle.IsEOL)
+	assert.False(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+}
+
+// TestStandardSchemaAdapter_AWSPattern_StillStandard: AWS pattern
+// with both eol and extendedSupport in the future → standard support.
+func TestStandardSchemaAdapter_AWSPattern_StillStandard(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
 
 	futureYear := time.Now().Year() + 1
 	cycle := &ProductCycle{
-		Cycle:       "1.31",
-		ReleaseDate: "2024-11-15",
-		Support:     time.Date(futureYear, 11, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),  // Future
-		EOL:         time.Date(futureYear+1, 5, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), // Future (extended support end in EKS)
+		Cycle:           "6",
+		EOL:             time.Date(futureYear, 1, 31, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),   // future
+		ExtendedSupport: time.Date(futureYear+3, 1, 31, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), // future
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.True(t, lifecycle.IsSupported)
+	assert.False(t, lifecycle.IsDeprecated)
+	assert.False(t, lifecycle.IsExtendedSupport)
+	assert.False(t, lifecycle.IsEOL)
+}
+
+// TestStandardSchemaAdapter_ExtendedSupportOverridesPastEOL guards the
+// reordering: previously, when `eol` was past, the EOL branch returned
+// before the extended-support branch could fire, so a future
+// `extendedSupport` date was ignored. This test pins that a future
+// extendedSupport date now correctly extends the version's life.
+func TestStandardSchemaAdapter_ExtendedSupportOverridesPastEOL(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
+
+	pastYear := time.Now().Year() - 2
+	futureYear := time.Now().Year() + 2
+	cycle := &ProductCycle{
+		Cycle:           "5.6",
+		Support:         time.Date(pastYear, 2, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+		EOL:             time.Date(pastYear, 2, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+		ExtendedSupport: time.Date(futureYear, 2, 1, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.False(t, lifecycle.IsEOL)
+	assert.True(t, lifecycle.IsExtendedSupport)
+	assert.True(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+}
+
+func TestEKSSchemaAdapter_CurrentVersion(t *testing.T) {
+	adapter := &EKSSchemaAdapter{}
+
+	// Live amazon-eks shape: cycle.eol is end-of-standard-support and
+	// cycle.extendedSupport is end-of-extended-support. Both in the
+	// future → standard support today.
+	futureYear := time.Now().Year() + 1
+	cycle := &ProductCycle{
+		Cycle:           "1.31",
+		ReleaseDate:     "2024-11-15",
+		EOL:             time.Date(futureYear, 11, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),   // standard-support end (future)
+		ExtendedSupport: time.Date(futureYear+1, 11, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), // extended-support end (future)
 	}
 
 	lifecycle, err := adapter.AdaptCycle(cycle)
@@ -162,23 +264,26 @@ func TestEKSSchemaAdapter_CurrentVersion(t *testing.T) {
 	assert.False(t, lifecycle.IsEOL)
 	assert.False(t, lifecycle.IsExtendedSupport)
 
-	// EKS has NO true EOL
+	// EKS has NO true EOL.
 	assert.Nil(t, lifecycle.EOLDate)
+	// DeprecationDate = cycle.eol (end of standard support).
 	assert.NotNil(t, lifecycle.DeprecationDate)
+	// ExtendedSupportEnd = cycle.extendedSupport.
 	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
 }
 
 func TestEKSSchemaAdapter_InExtendedSupport(t *testing.T) {
 	adapter := &EKSSchemaAdapter{}
 
-	// Version past standard support but in extended support
+	// Past cycle.eol (end of standard support) but before cycle.extendedSupport
+	// (end of extended support) → IN extended support → YELLOW.
 	pastYear := time.Now().Year() - 1
 	futureYear := time.Now().Year() + 1
 	cycle := &ProductCycle{
-		Cycle:       "1.28",
-		ReleaseDate: "2023-09-15",
-		Support:     time.Date(pastYear, 9, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),   // Past
-		EOL:         time.Date(futureYear, 3, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), // Future (extended support end)
+		Cycle:           "1.30",
+		ReleaseDate:     "2024-05-23",
+		EOL:             time.Date(pastYear, 7, 23, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),   // standard-support end (past)
+		ExtendedSupport: time.Date(futureYear, 7, 23, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), // extended-support end (future)
 	}
 
 	lifecycle, err := adapter.AdaptCycle(cycle)
@@ -193,12 +298,12 @@ func TestEKSSchemaAdapter_InExtendedSupport(t *testing.T) {
 func TestEKSSchemaAdapter_PastExtendedSupport(t *testing.T) {
 	adapter := &EKSSchemaAdapter{}
 
-	// Version past extended support end
+	// Past both cycle.eol AND cycle.extendedSupport — AWS no longer patches.
 	cycle := &ProductCycle{
-		Cycle:       "1.25",
-		ReleaseDate: "2023-01-15",
-		Support:     "2024-01-15", // Past
-		EOL:         "2024-07-15", // Past (extended support end)
+		Cycle:           "1.25",
+		ReleaseDate:     "2023-01-15",
+		EOL:             "2024-01-15", // standard-support end (past)
+		ExtendedSupport: "2024-07-15", // extended-support end (past)
 	}
 
 	lifecycle, err := adapter.AdaptCycle(cycle)
@@ -214,22 +319,54 @@ func TestEKSSchemaAdapter_NoTrueEOL(t *testing.T) {
 	adapter := &EKSSchemaAdapter{}
 
 	cycle := &ProductCycle{
-		Cycle:       "1.20",
-		ReleaseDate: "2021-01-15",
-		Support:     "2022-01-15",
-		EOL:         "2022-07-15",
+		Cycle:           "1.20",
+		ReleaseDate:     "2021-01-15",
+		EOL:             "2022-01-15",
+		ExtendedSupport: "2022-07-15",
 	}
 
 	lifecycle, err := adapter.AdaptCycle(cycle)
 	require.NoError(t, err)
 
-	// Verify EKS has NO true EOL date
+	// Verify EKS has NO true EOL date.
 	assert.Nil(t, lifecycle.EOLDate)
 
-	// ExtendedSupportEnd comes from cycle.EOL
+	// ExtendedSupportEnd comes from cycle.extendedSupport (NOT cycle.eol).
 	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
 	expectedDate, _ := time.Parse("2006-01-02", "2022-07-15")
 	assert.Equal(t, expectedDate, *lifecycle.ExtendedSupportEnd)
+
+	// DeprecationDate comes from cycle.eol (end of standard support).
+	assert.NotNil(t, lifecycle.DeprecationDate)
+	expectedStd, _ := time.Parse("2006-01-02", "2022-01-15")
+	assert.Equal(t, expectedStd, *lifecycle.DeprecationDate)
+}
+
+// TestEKSSchemaAdapter_LegacyBooleanExtendedSupport guards the
+// pre-2026 amazon-eks shape where cycle.extendedSupport was a boolean.
+// Live data now uses dates, but the adapter still tolerates the
+// legacy boolean so a hypothetical replay against archived JSON
+// classifies clusters consistently.
+func TestEKSSchemaAdapter_LegacyBooleanExtendedSupport(t *testing.T) {
+	adapter := &EKSSchemaAdapter{}
+
+	// Past cycle.eol with extendedSupport=true bool — the bool falls
+	// back to standardEnd as the extended-support boundary, so we
+	// land in past-extended → IsDeprecated, !IsExtendedSupport.
+	cycle := &ProductCycle{
+		Cycle:           "1.24",
+		ReleaseDate:     "2022-08-15",
+		EOL:             "2024-01-15", // past
+		ExtendedSupport: true,         // legacy bool
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.False(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+	assert.False(t, lifecycle.IsExtendedSupport)
+	assert.Nil(t, lifecycle.EOLDate)
 }
 
 func TestGetSchemaAdapter_Standard(t *testing.T) {
