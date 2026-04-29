@@ -254,18 +254,19 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 		// Create finding. Name, account, and region (when configured) are
 		// part of resource.Extra and propagate through verbatim.
 		finding := &types.Finding{
-			ResourceID:     resource.ID,
-			ResourceType:   resource.Type,
-			Service:        resource.Service,
-			CloudProvider:  resource.CloudProvider,
-			CurrentVersion: resource.CurrentVersion,
-			Engine:         resource.Engine,
-			Status:         status,
-			Message:        message,
-			Recommendation: recommendation,
-			EOLDate:        lifecycle.EOLDate,
-			Tags:           resource.Tags,
-			Extra:          resource.Extra,
+			ResourceID:       resource.ID,
+			ResourceType:     resource.Type,
+			Service:          resource.Service,
+			CloudProvider:    resource.CloudProvider,
+			CurrentVersion:   resource.CurrentVersion,
+			Engine:           resource.Engine,
+			Status:           status,
+			Message:          message,
+			Recommendation:   recommendation,
+			EOLDate:          lifecycle.EOLDate,
+			LifecycleDetails: types.LifecycleDetailsFromVersionLifecycle(lifecycle),
+			Tags:             resource.Tags,
+			Extra:            resource.Extra,
 		}
 
 		findings = append(findings, finding)

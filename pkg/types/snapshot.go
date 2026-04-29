@@ -31,6 +31,7 @@ type SnapshotSummary struct {
 	GreenCount           int                           `json:"green_count"`
 	UnknownCount         int                           `json:"unknown_count"`
 	CompliancePercentage float64                       `json:"compliance_percentage"`
+	CostSummary          *CostSummary                  `json:"cost_summary,omitempty"`
 	ByResourceType       map[ResourceType]*StatBucket  `json:"by_resource_type"`
 	ByService            map[string]*StatBucket        `json:"by_service"`
 	ByCloudProvider      map[CloudProvider]*StatBucket `json:"by_cloud_provider"`

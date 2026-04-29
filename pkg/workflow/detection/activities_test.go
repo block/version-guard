@@ -267,6 +267,9 @@ func TestDetectDrift_InlineFallback(t *testing.T) {
 	assert.Equal(t, 2, detect.FindingsCount)
 	assert.Empty(t, detect.FindingsBatchID, "no batch ID when using inline data")
 	assert.Len(t, detect.Findings, 2, "findings should be inline")
+	require.NotNil(t, detect.Findings[0].LifecycleDetails)
+	assert.Equal(t, "5.6.10a", detect.Findings[0].LifecycleDetails.Version)
+	assert.True(t, detect.Findings[0].LifecycleDetails.IsEOL)
 }
 
 // TestDetectDrift_PropagatesCloudProvider locks in the fix for a bug
