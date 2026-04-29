@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/block/Version-Guard/pkg/types"
 )
@@ -39,11 +40,13 @@ type Store interface {
 	GetSnapshot(ctx context.Context, snapshotID string) (*types.Snapshot, error)
 
 	// ListSnapshots lists recent snapshots with optional limit
-	ListSnapshots(ctx context.Context, limit int) ([]*SnapshotMetadata, error)
+	ListSnapshots(ctx context.Context, limit int) ([]*Metadata, error)
 }
 
-// SnapshotMetadata provides summary information about a snapshot without loading full content
-type SnapshotMetadata struct {
+// Metadata provides summary information about a snapshot without loading full content.
+//
+//nolint:govet // field alignment sacrificed for logical grouping
+type Metadata struct {
 	SnapshotID           string
 	GeneratedAt          time.Time
 	TotalResources       int
@@ -52,9 +55,20 @@ type SnapshotMetadata struct {
 	S3VersionID          string
 }
 
+// s3API is the subset of *s3.Client that S3Store actually uses.
+// Defined as an interface so unit tests can swap in a fake without
+// reaching for the AWS SDK middleware harness or a real bucket.
+// *s3.Client satisfies this interface implicitly.
+type s3API interface {
+	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+}
+
 // S3Store implements Store using AWS S3
 type S3Store struct {
-	client *s3.Client
+	client s3API
 	bucket string
 	prefix string // e.g., "version-guard/snapshots/"
 }
@@ -197,17 +211,19 @@ func (s *S3Store) GetSnapshot(ctx context.Context, snapshotID string) (*types.Sn
 }
 
 // ListSnapshots lists recent snapshots
-func (s *S3Store) ListSnapshots(ctx context.Context, limit int) ([]*SnapshotMetadata, error) {
-	var metadata []*SnapshotMetadata
+func (s *S3Store) ListSnapshots(ctx context.Context, limit int) ([]*Metadata, error) {
+	var metadata []*Metadata
 	var continuationToken *string
 	remaining := limit
 
 	for {
-		// Determine how many keys to request in this page (max 1000 per S3 API limit)
-		maxKeys := int32(remaining)
-		if maxKeys > 1000 {
-			maxKeys = 1000
+		// Determine how many keys to request in this page (max 1000 per S3 API limit).
+		// Cap before the int->int32 conversion so we never overflow on huge limit values.
+		pageSize := remaining
+		if pageSize > 1000 {
+			pageSize = 1000
 		}
+		maxKeys := int32(pageSize) //nolint:gosec // G115: pageSize is bounded to [1, 1000] above
 
 		listResult, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 			Bucket:            aws.String(s.bucket),
@@ -219,49 +235,11 @@ func (s *S3Store) ListSnapshots(ctx context.Context, limit int) ([]*SnapshotMeta
 			return nil, fmt.Errorf("failed to list snapshots: %w", err)
 		}
 
-		for _, obj := range listResult.Contents {
-			if obj.Key == nil {
+		for i := range listResult.Contents {
+			meta := s.headSnapshotObject(ctx, &listResult.Contents[i])
+			if meta == nil {
 				continue
 			}
-
-			// Skip the "latest" pointer
-			if *obj.Key == s.prefix+"latest.json" {
-				continue
-			}
-
-			// Get object metadata
-			headResult, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
-				Bucket: aws.String(s.bucket),
-				Key:    obj.Key,
-			})
-			if err != nil {
-				continue // Skip on error
-			}
-
-			meta := &SnapshotMetadata{
-				S3Key:       *obj.Key,
-				S3VersionID: aws.ToString(headResult.VersionId),
-			}
-
-			// Parse metadata
-			if val, ok := headResult.Metadata["snapshot-id"]; ok {
-				meta.SnapshotID = val
-			}
-			if val, ok := headResult.Metadata["total-resources"]; ok {
-				// Ignore scan error - if parsing fails, field remains zero
-				//nolint:errcheck // Intentionally ignoring parse errors - metadata is best-effort
-				fmt.Sscanf(val, "%d", &meta.TotalResources)
-			}
-			if val, ok := headResult.Metadata["compliance-percentage"]; ok {
-				// Ignore scan error - if parsing fails, field remains zero
-				//nolint:errcheck // Intentionally ignoring parse errors - metadata is best-effort
-				fmt.Sscanf(val, "%f", &meta.CompliancePercentage)
-			}
-
-			if obj.LastModified != nil {
-				meta.GeneratedAt = *obj.LastModified
-			}
-
 			metadata = append(metadata, meta)
 
 			// Check if we've reached the limit
@@ -281,6 +259,56 @@ func (s *S3Store) ListSnapshots(ctx context.Context, limit int) ([]*SnapshotMeta
 	}
 
 	return metadata, nil
+}
+
+// headSnapshotObject loads the per-object metadata for a single S3
+// object surfaced by ListObjectsV2. Returns nil to signal the object
+// should be skipped (the "latest" pointer, missing key, or HEAD
+// failure) — listing is best-effort and one bad object should not fail
+// the whole call.
+func (s *S3Store) headSnapshotObject(ctx context.Context, obj *s3types.Object) *Metadata {
+	if obj.Key == nil {
+		return nil
+	}
+
+	// Skip the "latest" pointer
+	if *obj.Key == s.prefix+"latest.json" {
+		return nil
+	}
+
+	headResult, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    obj.Key,
+	})
+	if err != nil {
+		return nil // Skip on error
+	}
+
+	meta := &Metadata{
+		S3Key:       *obj.Key,
+		S3VersionID: aws.ToString(headResult.VersionId),
+	}
+
+	// Parse metadata
+	if val, ok := headResult.Metadata["snapshot-id"]; ok {
+		meta.SnapshotID = val
+	}
+	if val, ok := headResult.Metadata["total-resources"]; ok {
+		// Ignore scan error - if parsing fails, field remains zero
+		//nolint:errcheck // Intentionally ignoring parse errors - metadata is best-effort
+		fmt.Sscanf(val, "%d", &meta.TotalResources)
+	}
+	if val, ok := headResult.Metadata["compliance-percentage"]; ok {
+		// Ignore scan error - if parsing fails, field remains zero
+		//nolint:errcheck // Intentionally ignoring parse errors - metadata is best-effort
+		fmt.Sscanf(val, "%f", &meta.CompliancePercentage)
+	}
+
+	if obj.LastModified != nil {
+		meta.GeneratedAt = *obj.LastModified
+	}
+
+	return meta
 }
 
 // generateKey creates an S3 key for a snapshot

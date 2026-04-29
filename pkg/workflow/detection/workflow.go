@@ -95,10 +95,7 @@ func DetectionWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutp
 
 	// Activity 1: Fetch inventory (LONG)
 	var inventoryResult InventoryResult
-	err = workflow.ExecuteActivity(longCtx, FetchInventoryActivityName, FetchInventoryInput{
-		ScanID:       input.ScanID,
-		ResourceType: input.ResourceType,
-	}).Get(longCtx, &inventoryResult)
+	err = workflow.ExecuteActivity(longCtx, FetchInventoryActivityName, FetchInventoryInput(input)).Get(longCtx, &inventoryResult)
 	if err != nil {
 		logger.Error("Failed to fetch inventory", "error", err)
 		return nil, err

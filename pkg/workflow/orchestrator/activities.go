@@ -19,6 +19,7 @@ const (
 
 // Activity input/output types
 
+//nolint:govet // field alignment sacrificed for logical grouping
 type CreateSnapshotInput struct {
 	ScanID        string
 	ResourceTypes []types.ResourceType
@@ -52,6 +53,8 @@ func NewActivities(
 // CreateSnapshot reads findings directly from the store and persists a snapshot to S3.
 // This avoids passing large finding payloads through Temporal activity results,
 // which would exceed the 4MB gRPC message limit for large inventories (12K+ resources).
+//
+//nolint:gocritic // Temporal activity inputs are passed by value by convention; the SDK marshals them through its DataConverter
 func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInput) (*SnapshotResult, error) {
 	logger := activity.GetLogger(ctx)
 	logger.Info("Creating snapshot", "scanID", input.ScanID, "resourceTypeCount", len(input.ResourceTypes))
@@ -91,13 +94,4 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 		TotalFindings:        snap.Summary.TotalResources,
 		CompliancePercentage: snap.Summary.CompliancePercentage,
 	}, nil
-}
-
-// RegisterActivities registers all activities with a Temporal worker
-func RegisterActivities(worker interface {
-	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
-}, activities *Activities) {
-	worker.RegisterActivityWithOptions(activities.CreateSnapshot, activity.RegisterOptions{
-		Name: CreateSnapshotActivityName,
-	})
 }

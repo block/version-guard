@@ -6,7 +6,9 @@ type ResourcesConfig struct {
 	Resources []ResourceConfig `yaml:"resources"`
 }
 
-// ResourceConfig defines configuration for a single resource type
+// ResourceConfig defines configuration for a single resource type.
+//
+//nolint:govet // YAML field order chosen for readability of resources.yaml
 type ResourceConfig struct {
 	ID            string          `yaml:"id"`
 	Type          string          `yaml:"type"`

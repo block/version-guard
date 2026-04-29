@@ -52,6 +52,7 @@ type DetectInput struct {
 	VersionLifecycles map[string]*types.VersionLifecycle
 }
 
+//nolint:govet // field alignment sacrificed for logical grouping
 type DetectResult struct {
 	FindingsBatchID string
 	FindingsCount   int
@@ -351,25 +352,4 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 	return &MetricsResult{
 		Summary: summary,
 	}, nil
-}
-
-// RegisterActivities registers all activities with a Temporal worker
-func RegisterActivities(worker interface {
-	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
-}, activities *Activities) {
-	worker.RegisterActivityWithOptions(activities.FetchInventory, activity.RegisterOptions{
-		Name: FetchInventoryActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.FetchEOLData, activity.RegisterOptions{
-		Name: FetchEOLDataActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.DetectDrift, activity.RegisterOptions{
-		Name: DetectDriftActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.StoreFindings, activity.RegisterOptions{
-		Name: StoreFindingsActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.EmitMetrics, activity.RegisterOptions{
-		Name: EmitMetricsActivityName,
-	})
 }

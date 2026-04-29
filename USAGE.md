@@ -525,7 +525,6 @@ HTTP_PORT=8081
 
 # Tag Configuration (customize AWS resource tag keys)
 TAG_APP_KEYS=app,application,service
-TAG_ENV_KEYS=environment,env
 
 # Logging
 LOG_LEVEL=info
@@ -533,14 +532,11 @@ LOG_LEVEL=info
 
 **Customizing Tag Keys:**
 
-Version Guard extracts metadata from AWS resource tags to determine service ownership and environment. By default, it looks for tags like `app`, `application`, `service`, etc. Customize these to match your organization's tagging conventions:
+Version Guard extracts the service name from AWS resource tags. By default, it looks for tags like `app`, `application`, or `service`. Customize this list to match your organization's tagging conventions:
 
 ```bash
 # Example: Organization uses "team" for service attribution
 TAG_APP_KEYS=team,squad,component,application
-
-# Example: Organization uses "env" exclusively
-TAG_ENV_KEYS=env
 ```
 
 Tag keys are tried in order — the first matching tag wins.

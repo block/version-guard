@@ -403,6 +403,7 @@ func TestNewProvider_DefaultSchema(t *testing.T) {
 func TestConvertCycle_ExtendedSupport(t *testing.T) {
 	provider, _ := NewProvider(&MockClient{}, "amazon-eks", "", 1*time.Hour, nil)
 
+	//nolint:govet // table-test struct field order chosen for readability
 	tests := []struct {
 		name                    string
 		cycle                   *ProductCycle
@@ -479,6 +480,7 @@ func TestConvertCycle_ExtendedSupport(t *testing.T) {
 }
 
 func TestParseDate(t *testing.T) {
+	//nolint:govet // table-test struct field order chosen for readability
 	tests := []struct {
 		name    string
 		input   string
