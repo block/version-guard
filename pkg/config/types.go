@@ -1,5 +1,7 @@
 package config
 
+import "github.com/block/Version-Guard/pkg/eol/endoflife"
+
 // ResourcesConfig represents the root configuration structure
 type ResourcesConfig struct {
 	Version   string           `yaml:"version"`
@@ -48,7 +50,8 @@ type InventoryConfig struct {
 
 // EOLConfig defines EOL provider configuration
 type EOLConfig struct {
-	Provider string `yaml:"provider"`
-	Product  string `yaml:"product"`
-	Schema   string `yaml:"schema"`
+	Provider  string                                `yaml:"provider"`
+	Product   string                                `yaml:"product"`
+	Schema    string                                `yaml:"schema"`
+	Lifecycle *endoflife.DeclarativeLifecycleConfig `yaml:"lifecycle,omitempty"`
 }

@@ -9,8 +9,9 @@ import (
 )
 
 // SchemaAdapter adapts endoflife.date ProductCycle to VersionLifecycle.
-// Some products use non-standard field semantics and need custom
-// adapters; see ADAPTERS.md for the catalog.
+// Most products use the built-in standard schema; product-specific
+// field semantics should prefer DeclarativeSchemaAdapter so adding a
+// new product is a YAML change rather than a Go adapter.
 type SchemaAdapter interface {
 	AdaptCycle(cycle *ProductCycle) (*types.VersionLifecycle, error)
 }
@@ -175,67 +176,144 @@ func (a *StandardSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionL
 	return lifecycle, nil
 }
 
-// EKSSchemaAdapter handles amazon-eks, whose cycles ship in a shape
-// that disagrees with the standard schema in two ways:
-//
-//   - There is no `support` field; `cycle.eol` is the end of *standard*
-//     support (start of paid extended support), not a true terminal date.
-//   - `cycle.extendedSupport` is now a *date* (the end of paid extended
-//     support); it used to be a boolean and the adapter still tolerates
-//     that legacy shape.
-//   - EKS clusters never truly stop working, so we always leave
-//     lifecycle.EOLDate = nil. Past-extended-support is still classified
-//     RED via `IsDeprecated && !IsExtendedSupport`, matching the prior
-//     product behavior of urging upgrades.
-type EKSSchemaAdapter struct{}
+const (
+	SchemaStandard    = "standard"
+	SchemaDeclarative = "declarative"
 
-// parseEKSExtendedEnd resolves cycle.extendedSupport into an end date.
-// The current schema uses a date string; older cycles used boolean
-// `true` to mean "extended support exists, ends at cycle.eol", so we
-// fall back to standardEnd in that case to keep upgrade nudges firing.
-func (a *EKSSchemaAdapter) parseEKSExtendedEnd(extSupport interface{}, standardEnd *time.Time) *time.Time {
-	switch v := extSupport.(type) {
-	case string:
-		if v != "" && v != falseBool {
-			if parsed, err := parseDate(v); err == nil {
-				return &parsed
-			}
+	lifecycleFieldEOL             = "eol"
+	lifecycleFieldSupport         = "support"
+	lifecycleFieldExtendedSupport = "extendedSupport"
+
+	lifecycleActionExtendedSupport = "extended_support"
+	lifecycleActionUnsupported     = "unsupported"
+	lifecycleActionEOL             = "eol"
+	lifecycleActionSupported       = "supported"
+)
+
+// DeclarativeLifecycleConfig lets YAML describe product-specific
+// lifecycle semantics without adding another Go adapter. It maps
+// endoflife.date fields into VersionLifecycle boundaries, then declares
+// how to classify the post-standard-support windows.
+//
+// Supported field names: support, eol, extendedSupport.
+// Supported actions: extended_support, unsupported, eol, supported.
+type DeclarativeLifecycleConfig struct {
+	DeprecationDate    LifecycleDateSource `yaml:"deprecation_date"`
+	ExtendedSupportEnd LifecycleDateSource `yaml:"extended_support_end"`
+	EOLDate            LifecycleDateSource `yaml:"eol_date"`
+
+	// DeprecatedWindow is applied after DeprecationDate and before
+	// ExtendedSupportEnd. Most AWS paid/deprecated support windows use
+	// "extended_support", which policy reports as YELLOW.
+	DeprecatedWindow string `yaml:"deprecated_window"`
+
+	// PastExtendedSupport is applied after ExtendedSupportEnd when
+	// EOLDate is omitted or later than ExtendedSupportEnd. EKS uses
+	// "unsupported" here because clusters keep running, but AWS stops
+	// patching them.
+	PastExtendedSupport string `yaml:"past_extended_support"`
+}
+
+// LifecycleDateSource declares which ProductCycle field supplies a
+// VersionLifecycle date. BoolTrueFallback handles archived upstream
+// shapes such as old EKS data where extendedSupport was true instead of
+// a date.
+type LifecycleDateSource struct {
+	Field            string `yaml:"field"`
+	BoolTrueFallback string `yaml:"bool_true_fallback,omitempty"`
+}
+
+// DeclarativeSchemaAdapter adapts cycles according to a YAML-provided
+// DeclarativeLifecycleConfig.
+type DeclarativeSchemaAdapter struct {
+	config *DeclarativeLifecycleConfig
+}
+
+// NewDeclarativeSchemaAdapter validates config and returns an adapter.
+func NewDeclarativeSchemaAdapter(config *DeclarativeLifecycleConfig) (*DeclarativeSchemaAdapter, error) {
+	if err := ValidateDeclarativeLifecycleConfig(config); err != nil {
+		return nil, err
+	}
+	return &DeclarativeSchemaAdapter{config: config}, nil
+}
+
+// ValidateDeclarativeLifecycleConfig checks that a YAML lifecycle block
+// only references fields and actions the generic adapter understands.
+func ValidateDeclarativeLifecycleConfig(config *DeclarativeLifecycleConfig) error {
+	if config == nil {
+		return errors.New("declarative lifecycle config is required")
+	}
+
+	for name, source := range map[string]LifecycleDateSource{
+		"deprecation_date":     config.DeprecationDate,
+		"extended_support_end": config.ExtendedSupportEnd,
+		"eol_date":             config.EOLDate,
+	} {
+		if err := validateLifecycleDateSource(source); err != nil {
+			return errors.Wrapf(err, "%s", name)
 		}
-	case bool:
-		if v && standardEnd != nil {
-			return standardEnd
+	}
+
+	if err := validateLifecycleAction(config.DeprecatedWindow, true); err != nil {
+		return errors.Wrap(err, "deprecated_window")
+	}
+	if err := validateLifecycleAction(config.PastExtendedSupport, true); err != nil {
+		return errors.Wrap(err, "past_extended_support")
+	}
+
+	if config.DeprecationDate.Field == "" &&
+		config.ExtendedSupportEnd.Field == "" &&
+		config.EOLDate.Field == "" {
+		return errors.New("at least one lifecycle date source is required")
+	}
+
+	return nil
+}
+
+func validateLifecycleDateSource(source LifecycleDateSource) error {
+	if source.Field != "" {
+		if !isSupportedLifecycleField(source.Field) {
+			return errors.Errorf("unsupported field %q", source.Field)
+		}
+	}
+	if source.BoolTrueFallback != "" {
+		if source.Field == "" {
+			return errors.New("bool_true_fallback requires field")
+		}
+		if !isSupportedLifecycleField(source.BoolTrueFallback) {
+			return errors.Errorf("unsupported bool_true_fallback field %q", source.BoolTrueFallback)
 		}
 	}
 	return nil
 }
 
-// classifyEKS sets the lifecycle status flags from the derived
-// boundaries. EKS has no true EOL, so past-extended-support is
-// represented as RED via IsDeprecated && !IsExtendedSupport.
-func (a *EKSSchemaAdapter) classifyEKS(lifecycle *types.VersionLifecycle, standardEnd, extendedEnd *time.Time) {
-	now := time.Now()
-	switch {
-	case extendedEnd != nil && now.After(*extendedEnd):
-		// Past extended support — AWS no longer issues patches.
-		lifecycle.IsSupported = false
-		lifecycle.IsDeprecated = true
-		lifecycle.IsExtendedSupport = false
-	case standardEnd != nil && now.After(*standardEnd):
-		// In the paid extended-support window.
-		lifecycle.IsSupported = true
-		lifecycle.IsExtendedSupport = true
-		lifecycle.IsDeprecated = true
+func isSupportedLifecycleField(field string) bool {
+	switch field {
+	case lifecycleFieldEOL, lifecycleFieldSupport, lifecycleFieldExtendedSupport:
+		return true
 	default:
-		// Still in standard support (or no date info at all).
-		lifecycle.IsSupported = true
+		return false
 	}
 }
 
-// AdaptCycle converts an amazon-eks ProductCycle to VersionLifecycle.
-func (a *EKSSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionLifecycle, error) {
+func validateLifecycleAction(action string, allowEmpty bool) error {
+	if action == "" && allowEmpty {
+		return nil
+	}
+	switch action {
+	case lifecycleActionExtendedSupport, lifecycleActionUnsupported, lifecycleActionEOL, lifecycleActionSupported:
+		return nil
+	default:
+		return errors.Errorf("unsupported action %q", action)
+	}
+}
+
+// AdaptCycle converts a ProductCycle to VersionLifecycle using the
+// declarative YAML semantics.
+func (a *DeclarativeSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionLifecycle, error) {
 	lifecycle := &types.VersionLifecycle{
 		Version:   cycle.Cycle,
-		Engine:    "eks",
+		Engine:    "", // Set by caller
 		Source:    providerName,
 		FetchedAt: time.Now(),
 	}
@@ -246,27 +324,105 @@ func (a *EKSSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionLifecy
 		}
 	}
 
-	// cycle.eol is end-of-standard-support for amazon-eks.
-	var standardEnd *time.Time
-	if dateStr := anyToDateString(cycle.EOL); dateStr != "" {
-		if parsed, err := parseDate(dateStr); err == nil {
-			standardEnd = &parsed
-		}
-	}
-	lifecycle.DeprecationDate = standardEnd
-	lifecycle.ExtendedSupportEnd = a.parseEKSExtendedEnd(cycle.ExtendedSupport, standardEnd)
-	// EKS has no true EOL — clusters keep running indefinitely.
-	lifecycle.EOLDate = nil
+	lifecycle.DeprecationDate = a.parseDateSource(cycle, a.config.DeprecationDate)
+	lifecycle.ExtendedSupportEnd = a.parseDateSource(cycle, a.config.ExtendedSupportEnd)
+	lifecycle.EOLDate = a.parseDateSource(cycle, a.config.EOLDate)
 
-	a.classifyEKS(lifecycle, standardEnd, lifecycle.ExtendedSupportEnd)
+	a.classify(lifecycle)
 
 	return lifecycle, nil
 }
 
+func (a *DeclarativeSchemaAdapter) parseDateSource(cycle *ProductCycle, source LifecycleDateSource) *time.Time {
+	value, ok := cycleFieldValue(cycle, source.Field)
+	if !ok {
+		return nil
+	}
+
+	if dateStr := anyToDateString(value); dateStr != "" {
+		if parsed, err := parseDate(dateStr); err == nil {
+			return &parsed
+		}
+	}
+
+	if boolValue, ok := value.(bool); ok && boolValue && source.BoolTrueFallback != "" {
+		fallback, ok := cycleFieldValue(cycle, source.BoolTrueFallback)
+		if !ok {
+			return nil
+		}
+		if dateStr := anyToDateString(fallback); dateStr != "" {
+			if parsed, err := parseDate(dateStr); err == nil {
+				return &parsed
+			}
+		}
+	}
+
+	return nil
+}
+
+func cycleFieldValue(cycle *ProductCycle, field string) (any, bool) {
+	switch field {
+	case lifecycleFieldEOL:
+		return cycle.EOL, true
+	case lifecycleFieldSupport:
+		return cycle.Support, true
+	case lifecycleFieldExtendedSupport:
+		return cycle.ExtendedSupport, true
+	default:
+		return nil, false
+	}
+}
+
+func (a *DeclarativeSchemaAdapter) classify(lifecycle *types.VersionLifecycle) {
+	now := time.Now()
+
+	switch {
+	case lifecycle.EOLDate != nil && now.After(*lifecycle.EOLDate):
+		applyLifecycleAction(lifecycle, lifecycleActionEOL)
+	case lifecycle.ExtendedSupportEnd != nil && now.After(*lifecycle.ExtendedSupportEnd):
+		applyLifecycleAction(lifecycle, defaultLifecycleAction(a.config.PastExtendedSupport, lifecycleActionUnsupported))
+	case lifecycle.DeprecationDate != nil && lifecycle.ExtendedSupportEnd != nil &&
+		now.After(*lifecycle.DeprecationDate) && now.Before(*lifecycle.ExtendedSupportEnd):
+		applyLifecycleAction(lifecycle, defaultLifecycleAction(a.config.DeprecatedWindow, lifecycleActionUnsupported))
+	case lifecycle.DeprecationDate != nil && now.After(*lifecycle.DeprecationDate):
+		applyLifecycleAction(lifecycle, lifecycleActionUnsupported)
+	default:
+		applyLifecycleAction(lifecycle, lifecycleActionSupported)
+	}
+}
+
+func defaultLifecycleAction(action, fallback string) string {
+	if action == "" {
+		return fallback
+	}
+	return action
+}
+
+func applyLifecycleAction(lifecycle *types.VersionLifecycle, action string) {
+	switch action {
+	case lifecycleActionExtendedSupport:
+		lifecycle.IsSupported = true
+		lifecycle.IsDeprecated = true
+		lifecycle.IsExtendedSupport = true
+	case lifecycleActionUnsupported:
+		lifecycle.IsSupported = false
+		lifecycle.IsDeprecated = true
+		lifecycle.IsExtendedSupport = false
+	case lifecycleActionEOL:
+		lifecycle.IsEOL = true
+		lifecycle.IsSupported = false
+		lifecycle.IsDeprecated = true
+		lifecycle.IsExtendedSupport = false
+	case lifecycleActionSupported:
+		lifecycle.IsSupported = true
+		lifecycle.IsDeprecated = false
+		lifecycle.IsExtendedSupport = false
+	}
+}
+
 // SchemaAdapters is a registry of available schema adapters.
 var SchemaAdapters = map[string]SchemaAdapter{
-	"standard":    &StandardSchemaAdapter{},
-	"eks_adapter": &EKSSchemaAdapter{},
+	SchemaStandard: &StandardSchemaAdapter{},
 }
 
 // GetSchemaAdapter returns the appropriate schema adapter for a product.

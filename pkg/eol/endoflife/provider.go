@@ -21,14 +21,12 @@ const (
 // Provider fetches EOL data for a single endoflife.date product.
 //
 // The product (e.g. "amazon-aurora-postgresql", "amazon-eks") and the
-// schema adapter (StandardSchemaAdapter / EKSSchemaAdapter / future
-// per-product adapters) are both set at construction time from
-// YAML-declared eol.product / eol.schema. One Provider instance per
-// resource keeps each product's cache and singleflight key isolated
-// and pushes the "which schema?" decision into config — adding a new
-// product with non-standard endoflife.date semantics is a new adapter
-// + a new schema string in YAML, not a hardcoded product check in
-// Provider.
+// schema adapter are both set at construction time from YAML-declared
+// eol.product / eol.schema / eol.lifecycle. One Provider instance per
+// resource keeps each product's cache and singleflight key isolated.
+// Products with non-standard endoflife.date semantics should use the
+// declarative lifecycle schema in YAML rather than adding a hardcoded
+// product check in Provider.
 //
 //nolint:govet // field alignment sacrificed for readability
 type Provider struct {
@@ -54,12 +52,37 @@ type cachedVersions struct {
 // validates this so misconfiguration fails at startup rather than
 // mid-scan.
 func NewProvider(client Client, product, schema string, cacheTTL time.Duration, logger *slog.Logger) (*Provider, error) {
+	return NewProviderWithLifecycle(client, product, schema, nil, cacheTTL, logger)
+}
+
+// NewProviderWithLifecycle creates a provider with an optional YAML
+// lifecycle mapping. Non-nil lifecycle config selects the declarative
+// adapter; otherwise schema names a built-in adapter such as "standard".
+func NewProviderWithLifecycle(
+	client Client,
+	product string,
+	schema string,
+	lifecycle *DeclarativeLifecycleConfig,
+	cacheTTL time.Duration,
+	logger *slog.Logger,
+) (*Provider, error) {
 	if schema == "" {
-		schema = "standard"
+		schema = SchemaStandard
 	}
-	adapter, err := GetSchemaAdapter(schema)
-	if err != nil {
-		return nil, errors.Wrapf(err, "endoflife provider for product %q", product)
+
+	var adapter SchemaAdapter
+	if lifecycle != nil {
+		declarativeAdapter, err := NewDeclarativeSchemaAdapter(lifecycle)
+		if err != nil {
+			return nil, errors.Wrapf(err, "endoflife provider for product %q", product)
+		}
+		adapter = declarativeAdapter
+	} else {
+		var err error
+		adapter, err = GetSchemaAdapter(schema)
+		if err != nil {
+			return nil, errors.Wrapf(err, "endoflife provider for product %q", product)
+		}
 	}
 	if cacheTTL == 0 {
 		cacheTTL = 24 * time.Hour // Default: cache for 24 hours

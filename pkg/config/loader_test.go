@@ -102,7 +102,15 @@ resources:
     eol:
       provider: endoflife-date
       product: amazon-eks
-      schema: eks_adapter
+      schema: declarative
+      lifecycle:
+        deprecation_date:
+          field: eol
+        extended_support_end:
+          field: extendedSupport
+          bool_true_fallback: eol
+        deprecated_window: extended_support
+        past_extended_support: unsupported
 `
 
 	err := os.WriteFile(configFile, []byte(configContent), 0644)
@@ -116,7 +124,9 @@ resources:
 	assert.Equal(t, "aurora-postgresql", cfg.Resources[0].ID)
 	assert.Equal(t, "eks", cfg.Resources[1].ID)
 	assert.Equal(t, "standard", cfg.Resources[0].EOL.Schema)
-	assert.Equal(t, "eks_adapter", cfg.Resources[1].EOL.Schema)
+	assert.Equal(t, "declarative", cfg.Resources[1].EOL.Schema)
+	require.NotNil(t, cfg.Resources[1].EOL.Lifecycle)
+	assert.Equal(t, "eol", cfg.Resources[1].EOL.Lifecycle.DeprecationDate.Field)
 }
 
 // TestLoadResourcesConfig_EmbeddedDefault asserts the binary works

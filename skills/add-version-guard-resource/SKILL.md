@@ -189,9 +189,9 @@ Use similar patterns for new resources.
 - `cycle.eol` → True end of life
 - `cycle.extendedSupport` → End of extended support
 
-**Known non-standard schemas** (require custom adapters):
-- **EKS (amazon-eks)**: `cycle.eol` means "end of extended support" NOT true EOL
-  - Use `schema: eks_adapter` in config
+**Known non-standard schemas** (use YAML-defined lifecycle semantics):
+- **EKS (amazon-eks)**: `cycle.eol` means "end of standard support" NOT true EOL
+  - Use `schema: declarative` with an `eol.lifecycle` block in config
 
 **Default**: Use `schema: standard` unless you know it's non-standard like EKS.
 
@@ -317,7 +317,7 @@ git commit -m "Add {resource-type} support to Version Guard
 - Added config entry with id: {resource-id}
 - Uses endoflife.date product: {eol-product-name}
 - Cloud provider: {cloud-provider}
-- Schema: {standard|eks_adapter}
+- Schema: {standard|declarative}
 
 NOTE: Add Wiz report ID to WIZ_REPORT_IDS environment variable:
   '{\"resource-id\":\"wiz-report-uuid\"}'

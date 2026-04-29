@@ -1,7 +1,7 @@
-# Example: EKS (Non-Standard Schema)
+# Example: EKS (Declarative Lifecycle Schema)
 # This is an example of a resource using NON-STANDARD endoflife.date schema
-# EKS uses cycle.eol to mean "end of extended support" NOT "true EOL"
-# Requires custom adapter: eks_adapter
+# EKS uses cycle.eol to mean "end of standard support" NOT "true EOL"
+# Lifecycle semantics are declared in YAML; no custom Go adapter is required.
 #
 # IMPORTANT: The resource 'id' is used to look up the Wiz report ID
 # in the WIZ_REPORT_IDS JSON map environment variable.
@@ -35,4 +35,12 @@
     eol:
       provider: endoflife-date
       product: amazon-eks
-      schema: eks_adapter  # Non-standard! cycle.eol → ExtendedSupportEnd (NOT EOLDate)
+      schema: declarative
+      lifecycle:
+        deprecation_date:
+          field: eol
+        extended_support_end:
+          field: extendedSupport
+          bool_true_fallback: eol
+        deprecated_window: extended_support
+        past_extended_support: unsupported

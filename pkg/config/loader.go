@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/block/Version-Guard/pkg/config/defaults"
+	"github.com/block/Version-Guard/pkg/eol/endoflife"
 )
 
 // LoadResourcesConfig loads and parses the resources configuration.
@@ -80,6 +81,9 @@ func validateConfig(config *ResourcesConfig) error {
 		if resource.EOL.Product == "" {
 			return errors.Errorf("resource[%d]: eol.product is required", i)
 		}
+		if err := validateEOLConfig(resource); err != nil {
+			return errors.Wrapf(err, "resource[%d] %q", i, resource.ID)
+		}
 		if err := validateMappings(resource); err != nil {
 			return errors.Wrapf(err, "resource[%d] %q", i, resource.ID)
 		}
@@ -89,6 +93,35 @@ func validateConfig(config *ResourcesConfig) error {
 	}
 
 	return nil
+}
+
+func validateEOLConfig(resource *ResourceConfig) error {
+	if resource.EOL.Schema == endoflife.SchemaDeclarative && resource.EOL.Lifecycle == nil {
+		return errors.New("eol.lifecycle is required when eol.schema is declarative")
+	}
+	if resource.EOL.Lifecycle != nil {
+		if resource.EOL.Schema == "" {
+			resource.EOL.Schema = endoflife.SchemaDeclarative
+		}
+		if resource.EOL.Schema != endoflife.SchemaDeclarative {
+			return errors.New("eol.lifecycle requires eol.schema to be declarative")
+		}
+		if err := endoflife.ValidateDeclarativeLifecycleConfig(resource.EOL.Lifecycle); err != nil {
+			return errors.Wrap(err, "invalid eol.lifecycle")
+		}
+		return nil
+	}
+	if _, err := endoflife.GetSchemaAdapter(defaultSchema(resource.EOL.Schema)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func defaultSchema(schema string) string {
+	if schema == "" {
+		return endoflife.SchemaStandard
+	}
+	return schema
 }
 
 // validateMappings enforces three rules on a resource's
