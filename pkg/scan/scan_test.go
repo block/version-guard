@@ -52,7 +52,8 @@ func TestTrigger_Run_FullScan(t *testing.T) {
 	mock := &mockStarter{
 		run: &mockWorkflowRun{id: "version-guard-scan-abc", runID: "run-1"},
 	}
-	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator")
+	defaults := []types.ResourceType{"aurora-mysql", "eks"}
+	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", defaults)
 
 	res, err := tr.Run(context.Background(), Input{ScanID: "abc"})
 
@@ -69,14 +70,26 @@ func TestTrigger_Run_FullScan(t *testing.T) {
 	in, ok := mock.calledArgs[0].(orchestrator.WorkflowInput)
 	require.True(t, ok, "workflow args[0] should be orchestrator.WorkflowInput")
 	assert.Equal(t, "abc", in.ScanID)
-	assert.Empty(t, in.ResourceTypes, "empty ResourceTypes means full scan")
+	// Empty caller list expands to the configured default — the
+	// orchestrator no longer carries a hardcoded fallback.
+	assert.Equal(t, defaults, in.ResourceTypes)
+}
+
+func TestTrigger_Run_EmptyInputAndNoDefault_ReturnsError(t *testing.T) {
+	mock := &mockStarter{}
+	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", nil)
+
+	_, err := tr.Run(context.Background(), Input{})
+
+	require.Error(t, err)
+	assert.False(t, mock.called, "no fallback list configured, must not start workflow")
 }
 
 func TestTrigger_Run_TargetedScan(t *testing.T) {
 	mock := &mockStarter{
 		run: &mockWorkflowRun{id: "wf", runID: "run"},
 	}
-	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator")
+	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", nil)
 
 	targets := []types.ResourceType{"aurora-mysql", "eks"}
 	_, err := tr.Run(context.Background(), Input{
@@ -94,7 +107,7 @@ func TestTrigger_Run_GeneratesScanIDWhenEmpty(t *testing.T) {
 	mock := &mockStarter{
 		run: &mockWorkflowRun{id: "wf", runID: "run"},
 	}
-	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator")
+	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", []types.ResourceType{"aurora-mysql"})
 
 	res, err := tr.Run(context.Background(), Input{})
 
@@ -108,7 +121,7 @@ func TestTrigger_Run_GeneratesScanIDWhenEmpty(t *testing.T) {
 
 func TestTrigger_Run_ReturnsErrorWhenTaskQueueMissing(t *testing.T) {
 	mock := &mockStarter{}
-	tr := NewTriggerWithStarter(mock, "")
+	tr := NewTriggerWithStarter(mock, "", nil)
 
 	_, err := tr.Run(context.Background(), Input{})
 
@@ -120,17 +133,19 @@ func TestNewTrigger_WiresClientAsStarter(t *testing.T) {
 	// client.Client satisfies the Starter interface; NewTrigger is a thin
 	// constructor that stores it. Passing nil is enough to exercise the line —
 	// we only assert the fields are wired.
-	tr := NewTrigger(nil, "version-guard-orchestrator")
+	defaults := []types.ResourceType{"aurora-mysql"}
+	tr := NewTrigger(nil, "version-guard-orchestrator", defaults)
 
 	require.NotNil(t, tr)
 	assert.Equal(t, "version-guard-orchestrator", tr.taskQueue)
 	assert.Nil(t, tr.starter, "nil client should pass through as nil Starter")
+	assert.Equal(t, defaults, tr.defaultResourceTypes)
 }
 
 func TestTrigger_Run_PropagatesStarterError(t *testing.T) {
 	wantErr := errors.New("temporal unavailable")
 	mock := &mockStarter{err: wantErr}
-	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator")
+	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", []types.ResourceType{"aurora-mysql"})
 
 	_, err := tr.Run(context.Background(), Input{ScanID: "x"})
 

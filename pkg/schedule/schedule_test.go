@@ -10,7 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
+
+	"github.com/block/Version-Guard/pkg/types"
 )
+
+// testResourceTypes is the canonical fixture list for ResourceTypes —
+// EnsureSchedule now rejects empty ResourceTypes (the orchestrator
+// workflow has no hardcoded fallback list), so every test that expects
+// the create/update path to run must pass a non-empty list.
+var testResourceTypes = []types.ResourceType{"aurora-mysql", "eks"}
 
 // mockScheduleHandle implements client.ScheduleHandle for testing.
 type mockScheduleHandle struct {
@@ -78,6 +86,28 @@ func TestEnsureSchedule_Disabled(t *testing.T) {
 	assert.Nil(t, mock.createOpts, "Create should not be called when disabled")
 }
 
+// TestEnsureSchedule_EmptyResourceTypes_Rejected guards the contract that
+// the orchestrator workflow no longer carries a hardcoded fallback list:
+// scheduled runs must declare an explicit ResourceTypes list (sourced
+// from the loaded YAML config at startup), otherwise the schedule would
+// fire and immediately fail with ErrNoResourceTypes every cron tick.
+func TestEnsureSchedule_EmptyResourceTypes_Rejected(t *testing.T) {
+	mock := &mockCreator{}
+	mgr := NewManagerWithClient(mock)
+
+	err := mgr.EnsureSchedule(context.Background(), Config{
+		Enabled:        true,
+		ScheduleID:     "test-schedule",
+		CronExpression: "0 */6 * * *",
+		TaskQueue:      "test-queue",
+		// ResourceTypes intentionally omitted
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ResourceTypes is empty")
+	assert.Nil(t, mock.createOpts, "Create must not be called when ResourceTypes is empty")
+}
+
 func TestEnsureSchedule_CreatesNew(t *testing.T) {
 	mock := &mockCreator{
 		createHandle: &mockScheduleHandle{id: "test-schedule"},
@@ -90,6 +120,7 @@ func TestEnsureSchedule_CreatesNew(t *testing.T) {
 		CronExpression: "0 */6 * * *",
 		Jitter:         5 * time.Minute,
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.NoError(t, err)
@@ -126,6 +157,7 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 		CronExpression: "0 */6 * * *",
 		Jitter:         5 * time.Minute,
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.NoError(t, err)
@@ -156,6 +188,7 @@ func TestEnsureSchedule_AlreadyExists_DifferentCron(t *testing.T) {
 		CronExpression: "0 */6 * * *",
 		Jitter:         5 * time.Minute,
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.NoError(t, err)
@@ -173,6 +206,7 @@ func TestEnsureSchedule_CreateError(t *testing.T) {
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.Error(t, err)
@@ -215,6 +249,7 @@ func TestEnsureSchedule_AlreadyExists_NilSpec(t *testing.T) {
 		CronExpression: "0 */6 * * *",
 		Jitter:         5 * time.Minute,
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.NoError(t, err)
@@ -261,6 +296,7 @@ func TestEnsureSchedule_Update_ReplacesStaleCalendars(t *testing.T) {
 		CronExpression: "*/5 * * * *",
 		Jitter:         1 * time.Minute,
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.NoError(t, err)
@@ -288,6 +324,7 @@ func TestEnsureSchedule_DescribeError(t *testing.T) {
 		ScheduleID:     "test-schedule",
 		CronExpression: "0 */6 * * *",
 		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
 	})
 
 	require.Error(t, err)

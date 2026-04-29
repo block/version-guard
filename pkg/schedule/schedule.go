@@ -9,6 +9,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 
+	"github.com/block/Version-Guard/pkg/types"
 	"github.com/block/Version-Guard/pkg/workflow/orchestrator"
 )
 
@@ -17,9 +18,15 @@ type Config struct {
 	ScheduleID     string
 	CronExpression string
 	TaskQueue      string
-	Jitter         time.Duration
-	Enabled        bool
-	Paused         bool
+	// ResourceTypes is the list of resource config IDs to scan on each
+	// scheduled run. Sourced from the loaded YAML config at startup —
+	// empty is rejected by the orchestrator workflow because there is
+	// no longer a hardcoded fallback list (see
+	// orchestrator.ErrNoResourceTypes).
+	ResourceTypes []types.ResourceType
+	Jitter        time.Duration
+	Enabled       bool
+	Paused        bool
 }
 
 // Creator abstracts the Temporal schedule client for testability.
@@ -45,9 +52,15 @@ func NewManagerWithClient(sc Creator) *Manager {
 
 // EnsureSchedule creates the schedule if it doesn't exist, or updates it
 // if the cron expression has changed.
+//
+//nolint:gocritic // Config is a startup-time, called-once value; pass-by-value keeps callers (cmd/server) free of pointer ceremony.
 func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 	if !cfg.Enabled {
 		return nil
+	}
+
+	if len(cfg.ResourceTypes) == 0 {
+		return fmt.Errorf("schedule %q: ResourceTypes is empty; populate from loaded config so scheduled runs aren't no-ops", cfg.ScheduleID)
 	}
 
 	opts := client.ScheduleOptions{
@@ -57,8 +70,10 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			Jitter:          cfg.Jitter,
 		},
 		Action: &client.ScheduleWorkflowAction{
-			Workflow:                 orchestrator.OrchestratorWorkflow,
-			Args:                     []interface{}{orchestrator.WorkflowInput{}},
+			Workflow: orchestrator.OrchestratorWorkflow,
+			Args: []interface{}{orchestrator.WorkflowInput{
+				ResourceTypes: cfg.ResourceTypes,
+			}},
 			TaskQueue:                cfg.TaskQueue,
 			WorkflowExecutionTimeout: 2 * time.Hour,
 		},

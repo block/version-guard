@@ -309,6 +309,27 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	}
 	fmt.Printf("\n✓ Total detectors initialized: %d\n", len(detectors))
 
+	// Build the canonical list of resource types to scan from the loaded
+	// YAML config. We iterate resourcesConfig.Resources (YAML order is
+	// stable, unlike map iteration) and only include entries that
+	// successfully initialized — Wiz-credentials-skipped resources stay
+	// out of scheduled runs. This list is the single source of truth
+	// for "full fleet scan" everywhere downstream: scheduled triggers,
+	// HTTP-triggered triggers, and any future entry point. The
+	// orchestrator workflow rejects empty input (see
+	// orchestrator.ErrNoResourceTypes), so adding a resource is a
+	// YAML-only change with no Go-side hardcoded list to drift from.
+	defaultResourceTypes := make([]types.ResourceType, 0, len(resourcesConfig.Resources))
+	for i := range resourcesConfig.Resources {
+		configID := types.ResourceType(resourcesConfig.Resources[i].ID)
+		if _, ok := invSources[configID]; ok {
+			defaultResourceTypes = append(defaultResourceTypes, configID)
+		}
+	}
+	if s.Verbose {
+		fmt.Printf("  Default scan list: %v\n", defaultResourceTypes)
+	}
+
 	// Create Temporal worker
 	w := worker.New(temporalClient, s.TemporalTaskQueue, worker.Options{
 		EnableSessionWorker: true,
@@ -354,11 +375,11 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 
 	// Create schedule (if enabled)
 	if s.ScheduleEnabled {
-		s.ensureSchedule(ctx, temporalClient)
+		s.ensureSchedule(ctx, temporalClient, defaultResourceTypes)
 	}
 
 	// Start HTTP admin server (POST /scan to trigger manual scans)
-	httpServer := startAdminHTTPServer(s.HTTPPort, temporalClient, s.TemporalTaskQueue)
+	httpServer := startAdminHTTPServer(s.HTTPPort, temporalClient, s.TemporalTaskQueue, defaultResourceTypes)
 
 	// Start worker
 	fmt.Printf("\n✓ Temporal worker starting on queue: %s\n", s.TemporalTaskQueue)
@@ -397,7 +418,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 // ensureSchedule creates or updates the Temporal schedule for periodic scans.
 // Failures are logged but do not abort startup; the worker can still service
 // manual scans triggered via the HTTP endpoint or CLI.
-func (s *ServerCLI) ensureSchedule(ctx context.Context, temporalClient client.Client) {
+func (s *ServerCLI) ensureSchedule(ctx context.Context, temporalClient client.Client, defaultResourceTypes []types.ResourceType) {
 	jitter, parseErr := time.ParseDuration(s.ScheduleJitter)
 	if parseErr != nil {
 		fmt.Printf("⚠️  Invalid schedule jitter %q, using default 5m: %v\n", s.ScheduleJitter, parseErr)
@@ -413,6 +434,7 @@ func (s *ServerCLI) ensureSchedule(ctx context.Context, temporalClient client.Cl
 		CronExpression: s.ScheduleCron,
 		Jitter:         jitter,
 		TaskQueue:      s.TemporalTaskQueue,
+		ResourceTypes:  defaultResourceTypes,
 	})
 	if schedErr != nil {
 		fmt.Printf("⚠️  Failed to create/update schedule: %v\n", schedErr)
@@ -426,8 +448,8 @@ func (s *ServerCLI) ensureSchedule(ctx context.Context, temporalClient client.Cl
 // startAdminHTTPServer wires the scan trigger into an HTTP admin server and
 // starts listening in a background goroutine. The returned *http.Server can be
 // shut down gracefully by the caller.
-func startAdminHTTPServer(port int, temporalClient client.Client, taskQueue string) *http.Server {
-	scanTrigger := scan.NewTrigger(temporalClient, taskQueue)
+func startAdminHTTPServer(port int, temporalClient client.Client, taskQueue string, defaultResourceTypes []types.ResourceType) *http.Server {
+	scanTrigger := scan.NewTrigger(temporalClient, taskQueue, defaultResourceTypes)
 	mux := http.NewServeMux()
 	mux.Handle("/scan", scan.NewHandler(scanTrigger))
 

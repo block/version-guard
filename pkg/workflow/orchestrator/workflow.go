@@ -11,6 +11,14 @@ import (
 	detectionWorkflow "github.com/block/Version-Guard/pkg/workflow/detection"
 )
 
+// ErrNoResourceTypes is returned when the orchestrator is invoked without
+// any resource types to scan. Callers (the HTTP scan trigger and the
+// scheduled trigger in pkg/schedule) are responsible for sourcing the
+// default list from the loaded YAML config and passing it on the input
+// — keeping the workflow free of hardcoded resource-type strings is what
+// makes adding a new resource a YAML-only change.
+var ErrNoResourceTypes = fmt.Errorf("orchestrator: WorkflowInput.ResourceTypes is empty; the caller must populate it from configured resources")
+
 // Workflow constants
 const (
 	OrchestratorWorkflowType = "VersionGuardOrchestratorWorkflow"
@@ -63,23 +71,14 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 
 	startTime := workflow.Now(ctx)
 
-	// Default to all supported resource types if none specified
+	// The list of resource types to scan must be supplied by the caller
+	// (HTTP scan trigger or the scheduled trigger), sourced from the
+	// loaded YAML config. The orchestrator deliberately does NOT carry
+	// a hardcoded fallback list — that would silently re-introduce the
+	// "adding a resource requires a Go change" coupling we removed.
 	resourceTypes := input.ResourceTypes
 	if len(resourceTypes) == 0 {
-		// Use config IDs from resources.yaml (not resource types)
-		// to support multiple resources of the same type
-		resourceTypes = []types.ResourceType{
-			"aurora-postgresql",
-			"aurora-mysql",
-			"eks",
-			"elasticache-redis",
-			"elasticache-valkey",
-			"elasticache-memcached",
-			"opensearch",
-			"rds-mysql",
-			"rds-postgresql",
-			"lambda",
-		}
+		return nil, ErrNoResourceTypes
 	}
 
 	// Retry policy for child workflows
@@ -114,11 +113,22 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		futures[resourceType] = future
 	}
 
-	// Wait for all child workflows to complete and collect results
-	resourceTypeResults := make(map[types.ResourceType]*ResourceTypeResult)
-	var successfulTypes []types.ResourceType
+	// Wait for all child workflows to complete and collect results.
+	//
+	// We iterate the input `resourceTypes` slice rather than ranging
+	// over the `futures` map. Map iteration order is unstable in Go,
+	// and `successfulTypes` becomes part of CreateSnapshotInput below
+	// — Temporal records activity inputs in workflow history. A
+	// different ordering on replay than the original execution would
+	// produce a different activity input hash and (depending on SDK
+	// version) either a non-determinism panic or a silently
+	// differently-ordered snapshot. Iterating the slice keeps the
+	// order pinned to the input order, which the caller controls.
+	resourceTypeResults := make(map[types.ResourceType]*ResourceTypeResult, len(resourceTypes))
+	successfulTypes := make([]types.ResourceType, 0, len(resourceTypes))
 
-	for resourceType, future := range futures {
+	for _, resourceType := range resourceTypes {
+		future := futures[resourceType]
 		var output detectionWorkflow.WorkflowOutput
 		err := future.Get(ctx, &output)
 
