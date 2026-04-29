@@ -55,9 +55,20 @@ type Metadata struct {
 	S3VersionID          string
 }
 
+// s3API is the subset of *s3.Client that S3Store actually uses.
+// Defined as an interface so unit tests can swap in a fake without
+// reaching for the AWS SDK middleware harness or a real bucket.
+// *s3.Client satisfies this interface implicitly.
+type s3API interface {
+	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+}
+
 // S3Store implements Store using AWS S3
 type S3Store struct {
-	client *s3.Client
+	client s3API
 	bucket string
 	prefix string // e.g., "version-guard/snapshots/"
 }
