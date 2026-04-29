@@ -6,10 +6,6 @@ type TagConfig struct {
 	// AppTags are the possible tag keys for application/service name
 	// Checked in order; first match wins
 	AppTags []string
-
-	// EnvTags are the possible tag keys for environment
-	// Checked in order; first match wins
-	EnvTags []string
 }
 
 // DefaultTagConfig returns the default tag configuration with common AWS tag naming conventions.
@@ -19,13 +15,11 @@ type TagConfig struct {
 //
 //	customTags := &wiz.TagConfig{
 //	    AppTags: []string{"my-app-tag", "application"},
-//	    EnvTags: []string{"environment"},
 //	}
 //	source := wiz.NewAuroraInventorySource(client, reportID).WithTagConfig(customTags)
 func DefaultTagConfig() *TagConfig {
 	return &TagConfig{
 		AppTags: []string{"app", "application", "service"},
-		EnvTags: []string{"environment", "env"},
 	}
 }
 
@@ -33,11 +27,6 @@ func DefaultTagConfig() *TagConfig {
 // Returns the tag value if found, empty string otherwise.
 func (tc *TagConfig) GetAppTag(tags map[string]string) string {
 	return getFirstMatchingTag(tags, tc.AppTags)
-}
-
-// GetEnvTag returns the environment tag value if found.
-func (tc *TagConfig) GetEnvTag(tags map[string]string) string {
-	return getFirstMatchingTag(tags, tc.EnvTags)
 }
 
 // getFirstMatchingTag searches for the first matching tag key in order.

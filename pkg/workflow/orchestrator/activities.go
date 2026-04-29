@@ -92,12 +92,3 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 		CompliancePercentage: snap.Summary.CompliancePercentage,
 	}, nil
 }
-
-// RegisterActivities registers all activities with a Temporal worker
-func RegisterActivities(worker interface {
-	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
-}, activities *Activities) {
-	worker.RegisterActivityWithOptions(activities.CreateSnapshot, activity.RegisterOptions{
-		Name: CreateSnapshotActivityName,
-	})
-}

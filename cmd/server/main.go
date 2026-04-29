@@ -72,7 +72,6 @@ type ServerCLI struct {
 
 	// Tag configuration (comma-separated lists for AWS resource tags)
 	TagAppKeys string `help:"Comma-separated tag keys for application/service name" default:"app,application,service" env:"TAG_APP_KEYS"`
-	TagEnvKeys string `help:"Comma-separated tag keys for environment" default:"environment,env" env:"TAG_ENV_KEYS"`
 
 	// Schedule configuration
 	ScheduleEnabled bool   `help:"Enable scheduled scanning" default:"false" env:"SCHEDULE_ENABLED"`
@@ -112,7 +111,6 @@ func parseTagKeys(input string) []string {
 func (s *ServerCLI) buildTagConfig() *wiz.TagConfig {
 	return &wiz.TagConfig{
 		AppTags: parseTagKeys(s.TagAppKeys),
-		EnvTags: parseTagKeys(s.TagEnvKeys),
 	}
 }
 
@@ -141,7 +139,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  AWS Region: %s\n", s.AWSRegion)
 		fmt.Printf("  S3 Prefix: %s\n", s.S3Prefix)
 		fmt.Printf("  Tag Keys - App: %s\n", s.TagAppKeys)
-		fmt.Printf("  Tag Keys - Env: %s\n", s.TagEnvKeys)
 		if s.ScheduleEnabled {
 			fmt.Printf("  Schedule: enabled (cron: %s, id: %s, jitter: %s)\n",
 				s.ScheduleCron, s.ScheduleID, s.ScheduleJitter)
@@ -214,7 +211,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	if s.Verbose {
 		fmt.Printf("\n✓ Tag configuration loaded:\n")
 		fmt.Printf("  App tags: %v\n", tagConfig.AppTags)
-		fmt.Printf("  Env tags: %v\n", tagConfig.EnvTags)
 	}
 
 	// Initialize Wiz client if credentials provided

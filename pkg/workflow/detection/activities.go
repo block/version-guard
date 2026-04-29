@@ -352,24 +352,3 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 		Summary: summary,
 	}, nil
 }
-
-// RegisterActivities registers all activities with a Temporal worker
-func RegisterActivities(worker interface {
-	RegisterActivityWithOptions(interface{}, activity.RegisterOptions)
-}, activities *Activities) {
-	worker.RegisterActivityWithOptions(activities.FetchInventory, activity.RegisterOptions{
-		Name: FetchInventoryActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.FetchEOLData, activity.RegisterOptions{
-		Name: FetchEOLDataActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.DetectDrift, activity.RegisterOptions{
-		Name: DetectDriftActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.StoreFindings, activity.RegisterOptions{
-		Name: StoreFindingsActivityName,
-	})
-	worker.RegisterActivityWithOptions(activities.EmitMetrics, activity.RegisterOptions{
-		Name: EmitMetricsActivityName,
-	})
-}
