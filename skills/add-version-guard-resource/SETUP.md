@@ -19,11 +19,12 @@ test -f pkg/config/defaults/resources.yaml && echo "✅ Config schema exists" ||
 # Verify loader exists
 test -f pkg/config/loader.go && echo "✅ Config loader exists" || echo "❌ Config loader missing"
 
-# Verify generic detector exists
-test -f pkg/detector/generic/detector.go && echo "✅ Generic detector exists" || echo "❌ Generic detector missing"
-
 # Verify generic inventory exists
 test -f pkg/inventory/wiz/generic.go && echo "✅ Generic inventory exists" || echo "❌ Generic inventory missing"
+
+# Verify the detection activities (which the orchestrator dispatches against
+# the per-resource inventory sources and EOL providers) exist
+test -f pkg/workflow/detection/activities.go && echo "✅ Detection activities exist" || echo "❌ Detection activities missing"
 
 # Verify EOL adapters exist
 test -f pkg/eol/endoflife/adapters.go && echo "✅ EOL adapters exist" || echo "❌ EOL adapters missing"
@@ -127,8 +128,8 @@ cd ~/Version-Guard
 # Check infrastructure
 test -f pkg/config/defaults/resources.yaml && \
 test -f pkg/config/loader.go && \
-test -f pkg/detector/generic/detector.go && \
 test -f pkg/inventory/wiz/generic.go && \
+test -f pkg/workflow/detection/activities.go && \
 test -f pkg/eol/endoflife/adapters.go && \
 echo "✅ Ready to use add-version-guard-resource skill" || \
 echo "❌ Generic infrastructure not implemented yet - see Phase 1 documentation"

@@ -13,7 +13,7 @@
 4. Detects schema from existing `aurora.csv` fixture
 5. Generates config with `id: aurora-postgresql` and `schema: standard`
 6. Appends to pkg/config/defaults/resources.yaml (NO report_id_env field)
-7. Runs `go test ./pkg/detector/generic -v` ✅
+7. Runs `go test ./pkg/config/... ./pkg/inventory/wiz/... ./pkg/workflow/detection/...` ✅
 8. Creates commit ✅
 9. Reminds user to add to WIZ_REPORT_IDS: `{"aurora-postgresql":"your-wiz-report-id-here"}`
 

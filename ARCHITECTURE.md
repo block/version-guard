@@ -22,7 +22,7 @@
 **Key Architecture Principles:**
 - **Multi-cloud by design**: Cloud provider abstraction layer (AWS first, GCP/Azure ready)
 - **Pluggable inventory sources**: Wiz (multi-cloud scanning) + cloud-native APIs + custom sources
-- **Pluggable EOL providers**: AWS APIs + GCP APIs + Azure APIs + endoflife.date
+- **Pluggable EOL providers**: endoflife.date today (per-product schema adapters); cloud-native EOL APIs can be added behind the same interface
 - **Single responsibility principle**: Each component has one clear purpose
 - **Interface-based design**: Easy to test, extend, and customize
 - **Extensible storage**: In-memory (included) → SQL database (your implementation)
@@ -42,8 +42,8 @@
 **Architecture Impact:**
 - All resource types include `CloudProvider` field (AWS, GCP, Azure, etc.)
 - Inventory sources are cloud-specific but share a common interface
-- EOL providers are cloud-specific but share a common interface
-- Detectors are resource-specific, cloud-aware
+- EOL providers are product-specific (endoflife.date today) but share a common interface
+- The detection pipeline is generic; per-resource behavior is declared in YAML, not in code
 - HTTP Admin API is cloud-agnostic (triggers scans across all providers)
 
 ---
@@ -55,7 +55,7 @@
 ### Benefits
 
 1. **Zero Code Changes**: Add resources by editing `pkg/config/defaults/resources.yaml` only
-2. **Reduced Duplication**: Single generic detector/inventory implementation
+2. **Reduced Duplication**: Single generic detection pipeline + generic Wiz inventory source
 3. **Better Testing**: Comprehensive test coverage on generic components
 4. **Single Source of Truth**: All resource definitions in one place
 5. **Scalable Configuration**: Single `WIZ_REPORT_IDS` JSON map for all resources
@@ -106,7 +106,7 @@ export WIZ_REPORT_IDS='{
 }'
 ```
 
-**Result:** The generic infrastructure automatically creates detectors, inventory sources, and EOL providers based on the config.
+**Result:** At startup, the server walks the YAML config and registers per-resource inventory sources and EOL providers in keyed maps. The generic detection activities (`FetchInventory`, `FetchEOLData`, `DetectDrift`) then dispatch against those maps at scan time.
 
 ---
 
@@ -129,16 +129,21 @@ export WIZ_REPORT_IDS='{
   │Inventory │       │   EOL    │       │ Policy & │
   │  Layer   │       │  Layer   │       │Classifier│
   └──────────┘       └──────────┘       └──────────┘
-  │ Wiz      │       │ AWS APIs │       │ Red/     │
-  │ Custom   │       │ endoflife│       │ Yellow/  │
-  └──────────┘       └──────────┘       │ Green    │
-        │                    │          └──────────┘
+  │ Wiz      │       │ endoflife│       │ Red/     │
+  │ Custom   │       │ (per     │       │ Yellow/  │
+  │          │       │  product)│       │ Green    │
+  └──────────┘       └──────────┘       └──────────┘
+        │                    │                │
         └────────────────────┼────────────────┘
                              ▼
-                    ┌────────────── ┐
-                    │  Detectors    │
-                    │ (Per Resource)│
-                    └──────┬─────── ┘
+                ┌────────────────────────┐
+                │ Detection Activities   │
+                │ (FetchInventory →      │
+                │  FetchEOLData →        │
+                │  DetectDrift)          │
+                │ dispatched per         │
+                │ resource by orchestr.  │
+                └──────────┬─────────────┘
                            ▼
                     ┌──────────────┐
                     │    Store     │
@@ -154,7 +159,7 @@ export WIZ_REPORT_IDS='{
 **Data Flow:**
 1. **Temporal Workflow** executes on schedule (configurable interval)
 2. **FetchInventory**: Wiz or custom source → resource list with versions
-3. **FetchEOL**: AWS APIs or endoflife.date → version lifecycle data
+3. **FetchEOL**: endoflife.date → version lifecycle data
 4. **DetectDrift**: Apply policy → classify Red/Yellow/Green
 5. **Store**: Save findings to storage backend
 6. **S3 Snapshot**: Create versioned JSON snapshot (optional)
@@ -193,24 +198,16 @@ Version-Guard/
 │   │
 │   ├── eol/
 │   │   ├── provider.go                   # EOLProvider interface
-│   │   ├── aws/
-│   │   │   ├── rds.go                    # AWS RDS EOL provider
-│   │   │   └── eks.go                    # AWS EKS EOL provider
 │   │   ├── endoflife/
 │   │   │   ├── client.go                 # endoflife.date HTTP client
 │   │   │   ├── provider.go               # endoflife.date provider
 │   │   │   ├── adapters.go               # Schema adapters (standard, EKS)
-│   │   │   └── ADAPTERS.md                # Why EKS needs its own adapter (gotcha doc)
+│   │   │   └── ADAPTERS.md               # Why EKS needs its own adapter (gotcha doc)
 │   │   └── mock/                         # Mock for tests
 │   │
 │   ├── policy/
 │   │   ├── policy.go                     # VersionPolicy interface
 │   │   └── default.go                    # Default Red/Yellow/Green policy
-│   │
-│   ├── detector/
-│   │   ├── detector.go                   # Detector interface
-│   │   └── generic/
-│   │       └── detector.go               # Generic config-driven detector
 │   │
 │   ├── store/
 │   │   ├── store.go                      # Store interface
@@ -271,7 +268,7 @@ type InventorySource interface {
 
 **Implementations:**
 - `wiz.GenericInventorySource` - Config-driven Wiz saved reports (handles all resource types)
-- `mock.MockInventorySource` - For testing
+- `mock.InventorySource` - For testing
 
 **How to extend:**
 1. **Config-driven approach (recommended)**: Add resource to `pkg/config/defaults/resources.yaml` with field mappings
@@ -295,14 +292,12 @@ type Provider interface {
 ```
 
 **Implementations:**
-- `aws.RDSProvider` - AWS RDS DescribeDBEngineVersions API
-- `aws.EKSProvider` - AWS EKS DescribeAddonVersions API
-- `endoflife.Provider` - endoflife.date HTTP API
+- `endoflife.Provider` - endoflife.date HTTP API (config-driven via `eol.product` + `eol.schema`)
 - `mock.EOLProvider` - For testing
 
-**Hybrid Strategy:**
-- Use cloud-native APIs when available (more accurate, real-time)
-- Fall back to endoflife.date for broader coverage
+**Single-Source Strategy:**
+- All EOL data comes from endoflife.date — no cloud provider credentials required for lifecycle lookups.
+- Per-product semantics are handled by schema adapters (`standard`, `eks_adapter`, …) selected from YAML.
 
 ### 3. VersionPolicy
 
@@ -321,54 +316,46 @@ type VersionPolicy interface {
 - 🟢 **GREEN**: In standard support, current version
 - ⚪ **UNKNOWN**: Version not found in EOL database
 
-### 4. Detector
+### 4. Detection Pipeline
 
-Detects version drift for a specific resource type.
+Detection is **not** packaged behind a `Detector` interface anymore. It runs
+directly as a sequence of Temporal activities in
+[`pkg/workflow/detection/activities.go`](./pkg/workflow/detection/activities.go),
+dispatched per resource type by the orchestrator. Each activity looks up the
+right `InventorySource`, `EOLProvider`, and `VersionPolicy` from the
+per-resource maps that `cmd/server/main.go` builds at startup from
+`pkg/config/defaults/resources.yaml`.
+
+**Activities (per child workflow):**
+
+1. `FetchInventory` — calls `inventorySources[resourceID].ListResources(...)`
+2. `FetchEOLData` — calls `eolProviders[resourceID].ListVersions(...)` once per engine in the inventory result
+3. `DetectDrift` — applies `policy.Classify` to each resource against the EOL lifecycle and produces `[]*Finding`
+
+**Pseudocode:**
 
 ```go
-type Detector interface {
-    // Detect scans resources and generates findings
-    Detect(ctx context.Context) ([]*Finding, error)
+// pkg/workflow/detection/workflow.go
+func DetectionWorkflow(ctx workflow.Context, in WorkflowInput) (*WorkflowOutput, error) {
+    var resources []*types.Resource
+    workflow.ExecuteActivity(ctx, FetchInventory, in.ResourceID).Get(ctx, &resources)
 
-    // ResourceType returns which resource type this detector handles
-    ResourceType() ResourceType
-}
-```
+    var eol map[string][]*types.VersionLifecycle
+    workflow.ExecuteActivity(ctx, FetchEOLData, in.ResourceID, engines(resources)).Get(ctx, &eol)
 
-**Implementations:**
-- `generic.Detector` - Config-driven detector (handles all resource types defined in `pkg/config/defaults/resources.yaml`)
-- Custom detectors - For specialized detection logic
+    var findings []*types.Finding
+    workflow.ExecuteActivity(ctx, DetectDrift, in.ResourceID, resources, eol).Get(ctx, &findings)
 
-**Pattern:**
-```go
-func (d *Detector) Detect(ctx context.Context) ([]*Finding, error) {
-    // 1. Fetch inventory
-    resources, err := d.inventory.ListResources(ctx, d.ResourceType())
-
-    // 2. For each resource, fetch EOL data
-    for _, resource := range resources {
-        lifecycle, err := d.eolProvider.GetVersionLifecycle(ctx, resource.Engine, resource.CurrentVersion)
-
-        // 3. Apply policy to classify
-        status := d.policy.Classify(resource, lifecycle)
-
-        // 4. Create finding
-        finding := &Finding{
-            Resource: resource,
-            Status:   status,
-            // ...
-        }
-
-        // 5. Store finding
-        d.store.Save(ctx, finding)
-    }
-
-    return findings, nil
+    return &WorkflowOutput{Findings: findings}, nil
 }
 ```
 
 **Config-Driven Approach:**
-The generic detector reads configuration from `pkg/config/defaults/resources.yaml` and automatically handles all configured resource types without code changes.
+There is a single, generic detection pipeline. Resource types are added by
+declaring them in `pkg/config/defaults/resources.yaml` (and providing a Wiz
+report ID via `WIZ_REPORT_IDS`); the pipeline picks them up with no Go
+changes. See [TRANSFORMS.md](./TRANSFORMS.md) for how to reshape raw inventory
+fields (version/engine) without writing code.
 
 ### 5. Store
 
@@ -592,7 +579,7 @@ func (e *JiraEmitter) Emit(ctx context.Context, snapshotID string, findings []*t
 make test
 
 # Run specific package
-go test ./pkg/detector/aurora -v
+go test ./pkg/workflow/detection -v
 
 # Run with coverage
 make test-coverage
@@ -605,9 +592,9 @@ Tag integration tests with `// +build integration`:
 ```go
 // +build integration
 
-func TestAuroraDetector_Integration(t *testing.T) {
-    // Requires real Wiz credentials
-    // Requires AWS credentials
+func TestAuroraDetection_Integration(t *testing.T) {
+    // Requires real Wiz credentials (WIZ_CLIENT_ID_SECRET, WIZ_CLIENT_SECRET_SECRET)
+    // Drives the FetchInventory → FetchEOLData → DetectDrift activity chain
 }
 ```
 
@@ -618,10 +605,10 @@ go test -tags=integration ./...
 
 ### Mocking
 
-All interfaces have mock implementations in `*/mock/` packages:
-- `mock.MockInventorySource`
-- `mock.EOLProvider`
-- `mock.MockStore`
+Pluggable interfaces have mock or in-memory implementations for tests:
+- `pkg/inventory/mock.InventorySource`
+- `pkg/eol/mock.EOLProvider`
+- `pkg/store/memory.Store` (production-grade in-memory store, also used by tests)
 
 ---
 
@@ -648,7 +635,7 @@ make run-locally  # One-shot
    - Configuration: Via environment variables
 3. **Configure credentials**:
    - Wiz: `WIZ_CLIENT_ID_SECRET`, `WIZ_CLIENT_SECRET_SECRET`
-   - AWS: Standard AWS credential chain
+   - AWS: Standard AWS credential chain (only needed for writing snapshots to S3)
    - S3: `S3_BUCKET`, `AWS_REGION`
 4. **Schedule workflows**:
    ```bash
@@ -769,8 +756,8 @@ The key must match the `id` field in `resources.yaml`.
 
 The server will automatically:
 - Load the new resource configuration
-- Create a generic detector for it
-- Include it in the orchestrator workflow
+- Register a generic Wiz inventory source and an endoflife.date EOL provider for it
+- Include it in the orchestrator workflow's resource list
 - Start scanning on the next scheduled run
 
 ### 5. Verify
@@ -826,7 +813,7 @@ invSources["my-resource"] = custom.NewMyInventorySource(...)
 ### Optimization Tips
 
 1. **Wiz saved reports** > GraphQL API (faster, cached)
-2. **AWS APIs** > endoflife.date when available (more accurate)
+2. **Per-`reportID` Wiz cache** avoids re-fetching the same CSV across resources that share a report
 3. **In-memory store** for < 10K findings, SQL for more
 4. **Activity heartbeats** for long-running scans
 5. **Workflow replay safe**: Avoid non-deterministic code
@@ -844,7 +831,7 @@ invSources["my-resource"] = custom.NewMyInventorySource(...)
 ### API Access
 
 - Wiz: Read-only saved report access
-- AWS: `rds:DescribeDBEngineVersions`, `eks:DescribeAddonVersions`, `s3:PutObject`
+- AWS: `s3:PutObject` on the snapshot bucket (no other AWS API access required — EOL data comes from endoflife.date)
 - HTTP Admin: Consider authentication for scan trigger endpoint
 
 ### Data Privacy
@@ -861,10 +848,10 @@ invSources["my-resource"] = custom.NewMyInventorySource(...)
 A: Yes! Implement a custom `InventorySource` that queries AWS APIs directly, or any other cloud inventory system.
 
 **Q: Can I use this without Temporal?**
-A: The core detection logic (detectors, policies, EOL providers) can be used standalone. Temporal provides scheduling and reliability.
+A: The core building blocks (inventory sources, EOL providers, policies) can be invoked directly. Temporal provides scheduling, retries, and the parallel fan-out across resource types.
 
 **Q: How do I add a new cloud provider?**
-A: Implement `InventorySource` and `EOLProvider` for that cloud, add to `CloudProvider` enum, create detectors.
+A: Implement `InventorySource` and `EOLProvider` for that cloud, add to `CloudProvider` enum, declare resources of that provider in `pkg/config/defaults/resources.yaml`. The generic detection pipeline picks them up.
 
 **Q: What if my organization uses a different issue tracker?**
 A: Implement the `IssueTrackerEmitter` interface for your system (Jira, ServiceNow, Linear, etc.).

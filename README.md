@@ -284,7 +284,8 @@ docker compose logs version-guard | grep "Snapshot created"
 make test
 
 # Run specific package tests
-go test ./pkg/detector/generic -v
+go test ./pkg/workflow/detection -v
+go test ./pkg/inventory/wiz -v
 go test ./pkg/policy -v
 
 # Run with coverage
@@ -492,7 +493,7 @@ s3://your-bucket/snapshots/latest.json
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Detailed system architecture
 - [CONTRIBUTING.md](./CONTRIBUTING.md) - How to contribute
-- [pkg/detector/](./pkg/detector/) - Detector implementation examples
+- [pkg/workflow/detection/](./pkg/workflow/detection/) - Per-resource detection activities (inventory → EOL → classify) driven by `resources.yaml`
 
 ## 🤝 Contributing
 

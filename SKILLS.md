@@ -200,8 +200,9 @@ Use the add-version-guard-resource skill to add OpenSearch support
 
 6. **Runs tests** - Executes:
    ```bash
-   go test ./pkg/detector/generic/...
+   go test ./pkg/config/...
    go test ./pkg/inventory/wiz/...
+   go test ./pkg/workflow/detection/...
    ```
 
 7. **Creates commit**:
@@ -442,7 +443,8 @@ cd ~/Version-Guard
 # Check infrastructure
 test -f pkg/config/defaults/resources.yaml && echo "✅ Config exists" || echo "❌ Missing"
 test -f pkg/config/loader.go && echo "✅ Loader exists" || echo "❌ Missing"
-test -f pkg/detector/generic/detector.go && echo "✅ Detector exists" || echo "❌ Missing"
+test -f pkg/inventory/wiz/generic.go && echo "✅ Generic Wiz inventory exists" || echo "❌ Missing"
+test -f pkg/workflow/detection/activities.go && echo "✅ Detection activities exist" || echo "❌ Missing"
 ```
 
 **Solutions:**
@@ -484,8 +486,9 @@ sudo apt-get install curl git golang make
 **Diagnostic:**
 ```bash
 # Run tests manually
-go test ./pkg/detector/generic/ -v
+go test ./pkg/config/ -v
 go test ./pkg/inventory/wiz/ -v
+go test ./pkg/workflow/detection/ -v
 ```
 
 **Common Issues:**
