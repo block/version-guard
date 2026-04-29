@@ -47,7 +47,8 @@ pwd  # Should be in the Version-Guard repo
 # 2. Verify generic infrastructure exists
 test -f pkg/config/defaults/resources.yaml && echo "✅ Config schema exists" || echo "❌ Missing - see SETUP.md"
 test -f pkg/config/loader.go && echo "✅ Config loader exists" || echo "❌ Missing - see SETUP.md"
-test -f pkg/detector/generic/detector.go && echo "✅ Generic detector exists" || echo "❌ Missing - see SETUP.md"
+test -f pkg/inventory/wiz/generic.go && echo "✅ Generic inventory source exists" || echo "❌ Missing - see SETUP.md"
+test -f pkg/workflow/detection/activities.go && echo "✅ Detection activities exist" || echo "❌ Missing - see SETUP.md"
 ```
 
 **STOP** if any prerequisite check fails. Direct user to SETUP.md.
@@ -282,11 +283,14 @@ Example for OpenSearch (uses both a version transform and an engine transform):
 Run tests to verify the config is valid:
 
 ```bash
-# Test generic detector
-go test ./pkg/detector/generic -v
+# Test the YAML loader (validates the new resource block parses correctly)
+go test ./pkg/config -v
 
-# Test generic inventory
+# Test the generic inventory source (parses Wiz CSV using the new mappings)
 go test ./pkg/inventory/wiz -v
+
+# Test the detection activities (the path the orchestrator drives at runtime)
+go test ./pkg/workflow/detection -v
 
 # Full test suite (optional, takes longer)
 make test

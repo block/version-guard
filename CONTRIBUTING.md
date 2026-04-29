@@ -167,36 +167,36 @@ See [SKILLS.md](SKILLS.md) for:
 
 ## Adding a New Resource Type (Manual Process)
 
-If you prefer to add resources manually (or AI skills are not available), follow these steps:
+If you prefer to add resources manually (or AI skills are not available),
+Version Guard is YAML-driven — most resources require **zero Go code
+changes**.
 
-1. **Define the resource type** in `pkg/types/resource.go`:
-   ```go
-   const ResourceTypeYourResource ResourceType = "your-resource"
-   ```
+1. **Add a resource block** to `pkg/config/defaults/resources.yaml` with
+   `inventory.required_mappings`, `inventory.field_mappings`, and an `eol`
+   section pointing at an endoflife.date product. See [USAGE.md → Runbook 1](./USAGE.md#runbook-1-onboarding-new-resource-type)
+   and [TRANSFORMS.md](./TRANSFORMS.md) for the field reference.
 
-2. **Create an inventory source** in `pkg/inventory/`:
-   ```go
-   // pkg/inventory/wiz/your_resource.go
-   type YourResourceInventorySource struct { /* ... */ }
-   ```
+2. **Add the Wiz report ID** to the `WIZ_REPORT_IDS` JSON map (the key must
+   match the resource's `id`).
 
-3. **Create an EOL provider** (or use existing):
-   ```go
-   // Most resources use the existing endoflife.date provider; declare
-   // eol.product (and eol.schema for non-standard semantics) in YAML.
-   // Add a new SchemaAdapter in pkg/eol/endoflife/adapters.go only if
-   // a product needs a non-standard endoflife.date interpretation.
-   ```
+3. **Add a fixture** under `pkg/inventory/wiz/testdata/` if the new resource
+   has a Wiz CSV shape not already covered by an existing fixture, and a
+   `pkg/config/loader_test.go` case if the YAML parsing is non-trivial.
 
-4. **Create a detector** in `pkg/detector/your_resource/`:
-   ```go
-   // pkg/detector/your_resource/detector.go
-   type Detector struct { /* ... */ }
-   ```
+4. **Add a new endoflife.date schema adapter** in
+   `pkg/eol/endoflife/adapters.go` *only* if the product uses non-standard
+   semantics (e.g. EKS-style standard support / extended support split).
 
-5. **Add tests** for all components
+5. **Code changes are only required when** you need a non-Wiz inventory
+   source or a non-endoflife.date EOL provider. In that case implement the
+   `InventorySource` / `EOLProvider` interfaces and wire them into the
+   per-resource maps in `cmd/server/main.go`. There is no `Detector`
+   interface — the generic detection activities in
+   `pkg/workflow/detection/activities.go` dispatch through those maps.
 
-6. **Update documentation** (README.md, ARCHITECTURE.md)
+6. **Add tests** for any new code (loader cases, adapter cases, custom
+   sources) and **update documentation** (README.md, ARCHITECTURE.md) as
+   needed.
 
 ## Project Structure
 
@@ -209,8 +209,7 @@ Version-Guard/
 │   ├── types/           # Core data structures
 │   ├── policy/          # Classification policies
 │   ├── inventory/       # Inventory sources (Wiz, mock)
-│   ├── eol/             # EOL data providers
-│   ├── detector/        # Resource detectors
+│   ├── eol/             # EOL data providers (endoflife.date + schema adapters)
 │   ├── store/           # Finding storage
 │   ├── snapshot/        # S3 snapshot management
 │   ├── workflow/        # Temporal workflows

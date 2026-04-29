@@ -615,46 +615,58 @@ temporal workflow describe \
 
 ### Runbook 1: Onboarding New Resource Type
 
-**Example: Adding a new database type**
+Version Guard is YAML-driven. For any resource whose inventory shape fits the
+generic Wiz source and whose EOL data is on endoflife.date, **no Go code
+changes are required** — you only edit `pkg/config/defaults/resources.yaml`
+and set a Wiz report ID.
 
-1. **Create EOL Provider**:
+For agent-driven onboarding, see the
+[`add-version-guard-resource` skill](skills/add-version-guard-resource/SKILL.md).
+Manual steps:
+
+1. **Add a resource block to `pkg/config/defaults/resources.yaml`**:
+   ```yaml
+   - id: mydb
+     type: mydb
+     cloud_provider: aws
+     inventory:
+       source: wiz
+       native_type_pattern: "rds/MyDB/instance"
+       required_mappings:
+         resource_id: "externalId"
+         version: "versionDetails.version"
+         engine: "typeFields.engine"
+       field_mappings:
+         name: "name"
+         account_id: "cloudAccount.externalId"
+         region: "region"
+         tags: "tags"
+     # transforms: optional — see TRANSFORMS.md if version/engine columns
+     # need reshaping (JSON extraction, prefix stripping, normalization).
+     eol:
+       provider: endoflife-date
+       product: mydb
+       schema: standard
+   ```
+
+2. **Add the Wiz report ID** to `WIZ_REPORT_IDS` (key must match `id`):
    ```bash
-   touch pkg/eol/custom/mydb.go
-   # Implement EOLProvider interface
+   export WIZ_REPORT_IDS='{"mydb":"your-report-id", ...}'
    ```
 
-2. **Create Inventory Source**:
-   ```bash
-   touch pkg/inventory/wiz/mydb.go
-   # Implement InventorySource interface
-   ```
-
-3. **Create Detector**:
-   ```bash
-   mkdir pkg/detector/mydb
-   touch pkg/detector/mydb/detector.go
-   # Implement Detector interface
-   ```
-
-4. **Register in Server Main**:
-   ```go
-   // cmd/server/main.go
-   eolProviders[types.ResourceTypeMyDB] = myeol.NewProvider(...)
-   invSources[types.ResourceTypeMyDB] = myinv.NewSource(...)
-   detectors[types.ResourceTypeMyDB] = mydb.NewDetector(...)
-   ```
-
-5. **Add Configuration**:
-   - Add to `.env.example`
-   - Update orchestrator workflow to include new resource type
-
-6. **Test & Deploy**:
+3. **Verify and deploy**:
    ```bash
    make test
    make lint
    make build
    ./bin/version-guard
    ```
+
+When you genuinely need a non-Wiz inventory source or a non-endoflife.date EOL
+provider, implement the `InventorySource` / `EOLProvider` interfaces and wire
+them into the per-resource maps in `cmd/server/main.go`. There is no
+`Detector` interface to implement — the generic detection activities in
+`pkg/workflow/detection/activities.go` dispatch through those maps.
 
 ### Runbook 2: Implementing Custom Emitter
 

@@ -43,7 +43,7 @@ Required files:
 - `pkg/config/defaults/resources.yaml`
 - `pkg/config/loader.go`
 - `pkg/inventory/wiz/generic.go`
-- `pkg/detector/generic/detector.go`
+- `pkg/workflow/detection/activities.go`
 - `pkg/eol/endoflife/adapters.go`
 
 **Status**: ✅ Phase 1 COMPLETED - Generic infrastructure implemented
