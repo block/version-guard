@@ -7,7 +7,6 @@ import (
 
 	"go.temporal.io/sdk/activity"
 
-	"github.com/block/Version-Guard/pkg/detector"
 	"github.com/block/Version-Guard/pkg/eol"
 	"github.com/block/Version-Guard/pkg/inventory"
 	"github.com/block/Version-Guard/pkg/policy"
@@ -88,7 +87,6 @@ type Activities struct {
 	EOLProviders     map[types.ResourceType]eol.Provider
 	Policy           policy.VersionPolicy
 	Store            store.Store
-	DetectorFactory  func(types.ResourceType) (detector.Detector, error)
 	resourceCache    sync.Map
 }
 

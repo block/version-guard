@@ -91,18 +91,15 @@ func (ci columnIndex) require(row []string, name string) (string, error) {
 	return v, nil
 }
 
-// Wiz CSV column header names used across all inventory sources.
-const (
-	colHeaderExternalID      = "externalId"
-	colHeaderName            = "name"
-	colHeaderNativeType      = "nativeType"
-	colHeaderAccountID       = "cloudAccount.externalId"
-	colHeaderVersion         = "versionDetails.version"
-	colHeaderRegion          = "region"
-	colHeaderTags            = "tags"
-	colHeaderEngineKind      = "typeFields.kind"
-	colHeaderGraphProperties = "graphEntity.properties"
-)
+// colHeaderNativeType is the Wiz CSV column that identifies a row's
+// resource kind (e.g. "rds/AmazonAuroraPostgreSQL/cluster", "lambda").
+// Every Wiz report includes this column and the inventory source uses
+// it to filter rows down to the configured native_type_pattern before
+// any field extraction. It is the only Wiz CSV column name hardcoded
+// in Go — every other column is declared per-resource in resources.yaml
+// (required_mappings, field_mappings, transforms.*.from_column) so
+// onboarding a new resource does not require touching this file.
+const colHeaderNativeType = "nativeType"
 
 // rowFilterFunc decides whether a CSV row should be processed.
 // Returns true if the row should be parsed, false to skip it.
