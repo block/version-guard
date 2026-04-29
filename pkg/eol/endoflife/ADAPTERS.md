@@ -1,147 +1,124 @@
-# Schema Adapters — and why EKS needs its own
+# Schema Adapters — and why EKS still needs its own
 
 `endoflife.date` is the single upstream source for every EOL provider in
-Version Guard, but it is **not** a uniform schema. Most products use the
-"standard" cycle shape; a handful use product-specific semantics where
-the same field name means a different thing. The `SchemaAdapter`
+Version Guard, but it is **not** a uniform schema. Most products use
+the "standard" cycle shape; a handful use product-specific semantics
+where the same field name means a different thing. The `SchemaAdapter`
 interface in [adapters.go](./adapters.go) is the seam where those
 deviations are absorbed so the rest of Version Guard sees a single,
 canonical `types.VersionLifecycle`.
 
-This doc exists because the EKS deviation is the kind of thing that
-will silently mis-classify clusters in production if you wire it up the
-"obvious" way.
+This doc exists because EKS is the kind of deviation that will silently
+mis-classify clusters in production if you wire it up the "obvious"
+way.
 
 ---
 
 ## The standard schema (what most products look like)
 
-Example cycle for `amazon-aurora-postgresql`:
+Three real-world cycle shapes are all handled by the single
+`StandardSchemaAdapter`:
+
+### 1. Plain OSS (PostgreSQL, etc.)
+
+```json
+{
+  "cycle": "15",
+  "support": "2027-11-09",
+  "eol": "2027-11-09"
+}
+```
+
+`support` = end of standard support, `eol` = true end of life. There
+is no extended-support concept; past `eol` is RED, past `support` but
+before `eol` (if they differ) is YELLOW (deprecated).
+
+### 2. Aurora pattern (support + eol + extendedSupport date)
 
 ```json
 {
   "cycle": "17",
-  "releaseDate": "2025-02-20",
   "support": "2030-02-28",
   "eol": "2030-02-28",
   "extendedSupport": "2033-02-28"
 }
 ```
 
-`StandardSchemaAdapter` maps these as you would expect:
+`support` = end of standard support, `extendedSupport` = end of paid
+extended support and **the true terminal date**. Past `support` but
+before `extendedSupport` is in extended support (YELLOW); past
+`extendedSupport` is RED.
 
-| endoflife.date field | `VersionLifecycle` field      | meaning                                  |
-| -------------------- | ----------------------------- | ---------------------------------------- |
-| `support`            | `DeprecationDate`             | end of standard support                  |
-| `eol`                | `EOLDate`                     | true end of life — version stops working |
-| `extendedSupport`    | `ExtendedSupportEnd`          | last day AWS will sell extended support  |
-
-A version past `eol` is `IsEOL=true`, classified RED by the policy
-layer. A version past `support` but before `eol` is in extended support,
-classified YELLOW. Simple.
-
----
-
-## The EKS gotcha — three deviations from the standard
-
-EKS does not match the standard schema in three concrete ways:
-
-1. The same field name (`cycle.eol`) means a different thing on EKS
-   than on standard products.
-2. EKS removes a concept that standard products always have (true EOL).
-3. The adapter compensates for (1) and (2) with a routing that itself
-   loses information — output field name and source field name do not
-   mean the same thing.
-
-Each deviation, in turn:
-
-### Deviation 1 — `cycle.eol` is **not** the true EOL
-
-For `amazon-eks`, the `eol` field is the day **standard support ends**,
-not the day the version stops working. Compare:
+### 3. AWS ElastiCache / Aurora MySQL pattern (no `support` field)
 
 ```json
-// amazon-eks cycle 1.31 (live data)
 {
-  "cycle": "1.31",
-  "eol": "2025-11-26",                 // ← standard-support end, NOT true EOL
-  "extendedSupport": "2026-11-26"      // ← extended-support end
+  "cycle": "5",
+  "eol": "2026-01-31",
+  "extendedSupport": "2029-01-31"
 }
 ```
 
-If you ran cycle 1.31 through `StandardSchemaAdapter`, today
-(2026-04-28) it would be flagged `IsEOL=true` — implying the cluster
-has stopped working. It hasn't. The cluster is in extended support and
-will be supported by AWS until 2026-11-26. `EKSSchemaAdapter` avoids
-that specific misclassification by hard-setting `lifecycle.EOLDate =
-nil` (see Deviation 2) and routing `cycle.eol` into
-`lifecycle.ExtendedSupportEnd` instead.
+There is no `support` field. Upstream uses `eol` as shorthand for
+"end of standard support" *because* there's a real terminal date in
+`extendedSupport`. The adapter recognizes the AWS pattern by
+`extendedSupport` being a date, and treats `eol` as the
+standard-support boundary, with `extendedSupport` as both the
+extended-support end **and** the true EOL date.
 
-(Even after this routing the in-extended-support classification is
-still imperfect — see Deviation 3 — but no version is ever reported as
-past true EOL.)
+The same `StandardSchemaAdapter` handles all three shapes — see
+`deriveBoundaries` in [adapters.go](./adapters.go) for the three-way
+switch.
 
-### Deviation 2 — EKS has no true EOL
-
-EKS clusters never stop working. Once you are past extended support AWS
-stops issuing patches, but the control plane keeps running on the old
-version indefinitely. There is no equivalent of the standard `eol`
-field for EKS, and the adapter encodes that by hard-setting
-`lifecycle.EOLDate = nil` regardless of input. Any classifier rule
-keyed on `EOLDate` is therefore inert for EKS — the policy reads
-`ExtendedSupportEnd` instead.
-
-### Deviation 3 — `cycle.eol` (standard-support-end) is mapped onto `ExtendedSupportEnd`; `cycle.extendedSupport` is ignored
-
-The adapter routes `cycle.eol` (which marks **standard-support-end** —
-see Deviation 1) into the output field `lifecycle.ExtendedSupportEnd`,
-and ignores `cycle.extendedSupport` entirely. This is the part of the
-adapter most likely to mislead a reader of the code: input field name
-and output field name **do not** mean the same thing.
-
-In effect, the adapter pretends standard-support-end is
-extended-support-end. For cycle 1.31:
-
-| Source field            | Source value | Real meaning             | Mapped to                    | Effect                                                              |
-| ----------------------- | ------------ | ------------------------ | ---------------------------- | ------------------------------------------------------------------- |
-| `cycle.eol`             | `2025-11-26` | standard-support-end     | `lifecycle.ExtendedSupportEnd` | adapter treats this date as the policy threshold for "past extended support" |
-| `cycle.extendedSupport` | `2026-11-26` | extended-support-end     | (ignored)                    | the real extended-support window is invisible to the policy layer    |
-
-Historical reason: when the adapter was written, endoflife.date
-returned `extendedSupport` as a boolean flag, so `cycle.eol` was the
-only available date signal. Live data now returns a real date in
-`extendedSupport`, but the adapter has not been updated.
-
-**Consequence:** an EKS version that is genuinely in extended support
-today is classified as past-extended-support (RED) by the policy
-layer. This is a known coarsening — it errs toward urging upgrades,
-which matches the intended product behavior, but it is a real
-semantic gap to be aware of when reading EKS findings, and a
-candidate for a follow-up fix.
+| `VersionLifecycle` field | Sourced from                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `DeprecationDate`        | `support` if present, else `eol` when `extendedSupport` is also present (AWS pattern). |
+| `ExtendedSupportEnd`     | `extendedSupport` (date), or legacy boolean `true` falling back to `eol`.        |
+| `EOLDate`                | `extendedSupport` when set (true terminal); else `eol`; else nil.               |
 
 ---
 
-## What the adapter actually outputs
+## EKS — still its own adapter, but for narrower reasons now
 
-For `amazon-eks` cycle 1.31 (`eol: 2025-11-26`,
-`extendedSupport: 2026-11-26`), evaluated on 2026-04-28 — a date that
-is genuinely inside the AWS-defined extended-support window
-(2025-11-26 → 2026-11-26):
+EKS still doesn't fit the standard schema because EKS clusters
+**never truly stop working** — once you're past extended support, AWS
+stops issuing patches but the control plane keeps running. There's no
+"true EOL" for an EKS version, only "out of AWS support".
 
-| Field                          | Value        | Source / note                                                                 |
-| ------------------------------ | ------------ | ----------------------------------------------------------------------------- |
-| `EOLDate`                      | `nil`        | always for EKS (Deviation 2)                                                  |
-| `DeprecationDate`              | `nil`        | EKS cycles have no `cycle.support` field                                      |
-| `ExtendedSupportEnd`           | `2025-11-26` | sourced from **`cycle.eol`** (standard-support-end) — *not* `cycle.extendedSupport`; see Deviation 3 |
-| `IsExtendedSupport`            | `false`*     | branch is unreachable in practice — see footnote                              |
-| `IsSupported` / `IsDeprecated` | `false` / `true` | classified RED, because `now` (2026-04-28) is past `ExtendedSupportEnd` (2025-11-26) — even though AWS is still in real extended support until 2026-11-26 |
+`EKSSchemaAdapter` therefore:
 
-\* The adapter reports `IsExtendedSupport=true` only while
-`now` is between `cycle.support` and `cycle.eol` — and EKS cycles have
-no `cycle.support` field, so the "in extended support" branch is
-unreachable in practice. Combined with Deviation 3, the policy layer
-never sees an EKS version as YELLOW; it's GREEN until it crosses
-`cycle.eol` (standard-support-end), then RED.
+1. Maps `cycle.eol` → `DeprecationDate` (end of standard support;
+   start of paid extended support).
+2. Maps `cycle.extendedSupport` (date) → `ExtendedSupportEnd`.
+3. Hard-sets `lifecycle.EOLDate = nil` regardless of input.
+4. Classifies past-extended-support as RED via
+   `IsDeprecated && !IsExtendedSupport` (same effect as the standard
+   adapter's terminal RED branch, but without claiming the cluster is
+   dead).
+
+The adapter also tolerates the pre-2026 shape where
+`cycle.extendedSupport` was a boolean — a `true` value falls back to
+`cycle.eol` as the extended-support boundary.
+
+### Live example
+
+For amazon-eks cycle 1.30 (`eol: 2025-07-23`,
+`extendedSupport: 2026-07-23`), evaluated on 2026-04-29:
+
+| Field                          | Value          | Source / note                                            |
+| ------------------------------ | -------------- | -------------------------------------------------------- |
+| `EOLDate`                      | `nil`          | always nil for EKS                                       |
+| `DeprecationDate`              | `2025-07-23`   | `cycle.eol` (end of standard support)                    |
+| `ExtendedSupportEnd`           | `2026-07-23`   | `cycle.extendedSupport`                                  |
+| `IsExtendedSupport`            | `true`         | now is between standard-end and extended-end             |
+| `IsSupported`                  | `true`         | still in paid extended support                           |
+| `IsDeprecated`                 | `true`         | past standard support                                    |
+
+→ Policy classifies as **YELLOW**.
+
+For the same cycle past `extendedSupport`, status flips to
+`IsDeprecated=true, IsExtendedSupport=false, IsSupported=false` →
+**RED**, with `EOLDate` still nil.
 
 ---
 
@@ -155,7 +132,7 @@ resource entry, validated by the config loader at startup:
   eol:
     provider: endoflife-date
     product: amazon-eks
-    schema: eks_adapter        # ← the EKS gotcha lives here
+    schema: eks_adapter        # ← EKS-only — no true EOL
 ```
 
 ```yaml
@@ -163,34 +140,35 @@ resource entry, validated by the config loader at startup:
   eol:
     provider: endoflife-date
     product: amazon-aurora-postgresql
-    schema: standard           # ← the default for almost everything
+    schema: standard           # ← the default for almost everything,
+                               #   including AWS ElastiCache/RDS/Aurora
+                               #   that ship eol+extendedSupport
 ```
 
 Empty `schema` defaults to `standard`. Adding a new schema means
 implementing `SchemaAdapter`, registering it in `SchemaAdapters` in
-[adapters.go](./adapters.go), and naming it from YAML — no Go change in
-the resource detector, the activities, or the policy.
+[adapters.go](./adapters.go), and naming it from YAML — no Go change
+in the activities or the policy layer.
 
 ---
 
 ## Adding a new adapter — the rule of thumb
 
 If a new product cycle's fields have different semantics from the
-standard ones, write an adapter. Symptoms that indicate you need one:
+standard ones (in any of the three shapes above), write an adapter.
+Symptoms that indicate you need one:
 
 - A field's name suggests one thing but the dates encode another (the
-  EKS `eol` case above).
-- A field is a boolean where the standard schema expects a date, or
-  vice versa.
+  EKS `eol`-isn't-EOL case).
 - The product is missing a concept the standard schema relies on
   (EKS having no true EOL).
-- Comparing the live JSON cycle to the standard layout shows a
-  field that should never be parsed as a date, or a date that should
-  never be treated as the true EOL.
+- A field is a boolean where the standard schema expects a date in a
+  way that the existing `extendedSupport: true` fallback doesn't cover.
 
-If a new product matches the standard semantics, do not write an
-adapter — use `standard` and move on. The point of this seam is to keep
-deviations explicit and small, not to encode every product separately.
+If a new product matches one of the three standard shapes, do not
+write an adapter — use `standard` and move on. The point of this seam
+is to keep deviations explicit and small, not to encode every product
+separately.
 
 ---
 
@@ -198,11 +176,11 @@ deviations explicit and small, not to encode every product separately.
 
 ```sh
 curl -s https://endoflife.date/api/amazon-eks.json | jq '.[0]'
+curl -s https://endoflife.date/api/amazon-elasticache-redis.json | jq '.[0]'
 curl -s https://endoflife.date/api/amazon-aurora-postgresql.json | jq '.[0]'
 ```
 
-Two cycles, side by side, will show you in seconds whether you are
-looking at a standard-schema product or another EKS-style gotcha. If
-the field shapes match the standard table at the top of this doc, ship
-it as `schema: standard`. If they don't, write an adapter and add a row
-to this doc.
+Three cycles side-by-side will show you in seconds which shape you're
+looking at. Match against the table at the top — if the field shapes
+are one of the three standard patterns, ship it as `schema: standard`.
+If not, write an adapter and add a section here.

@@ -8,121 +8,147 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
-// SchemaAdapter adapts endoflife.date ProductCycle to VersionLifecycle
-// Some products use non-standard field semantics and need custom adapters
+// SchemaAdapter adapts endoflife.date ProductCycle to VersionLifecycle.
+// Some products use non-standard field semantics and need custom
+// adapters; see ADAPTERS.md for the catalog.
 type SchemaAdapter interface {
 	AdaptCycle(cycle *ProductCycle) (*types.VersionLifecycle, error)
 }
 
-// StandardSchemaAdapter handles products with standard endoflife.date schema
-// Standard semantics:
-//   - cycle.support → DeprecationDate (end of standard support)
-//   - cycle.eol → EOLDate (true end of life)
-//   - cycle.extendedSupport → ExtendedSupportEnd
+// StandardSchemaAdapter handles products with standard endoflife.date semantics.
+//
+// The adapter recognizes three field shapes that real upstream cycles
+// take, and unifies them into the canonical VersionLifecycle dates:
+//
+//  1. support + eol + extendedSupport (date) — Aurora pattern.
+//     standardEnd = support, extendedEnd = extendedSupport, trueEOL = extendedSupport.
+//
+//  2. eol + extendedSupport (date), no support — AWS ElastiCache pattern.
+//     `eol` here is upstream shorthand for "end of standard support" because
+//     `extendedSupport` is the real terminal date. standardEnd = eol,
+//     extendedEnd = extendedSupport, trueEOL = extendedSupport.
+//
+//  3. support + eol, no extendedSupport — pure OSS pattern (PostgreSQL etc.).
+//     standardEnd = support, trueEOL = eol, no extended-support window.
+//
+// Legacy boolean `extendedSupport: true` is honored: when paired with
+// a date `eol`, the adapter treats `eol` itself as the end of the
+// extended-support window. `false` boolean is treated as no extended
+// support.
 type StandardSchemaAdapter struct{}
 
-// lifecycleDates holds parsed date values for lifecycle calculations
+// lifecycleDates holds the raw parsed dates from a cycle, before
+// semantic interpretation in setLifecycleStatus.
 type lifecycleDates struct {
 	eol             *time.Time
 	support         *time.Time
-	extendedSupport *time.Time
+	extendedSupport *time.Time // only set if cycle.extendedSupport was a *date string*
+	extendedTrue    bool       // legacy: cycle.extendedSupport was bool true
 }
 
-// parseCycleDates extracts and parses dates from a ProductCycle
 func (a *StandardSchemaAdapter) parseCycleDates(cycle *ProductCycle) lifecycleDates {
 	dates := lifecycleDates{}
 
-	// Parse EOL date (STANDARD semantics: true end of life)
 	if dateStr := anyToDateString(cycle.EOL); dateStr != "" {
 		if parsed, err := parseDate(dateStr); err == nil {
 			dates.eol = &parsed
 		}
 	}
 
-	// Parse support date (STANDARD semantics: end of standard support)
 	if dateStr := anyToDateString(cycle.Support); dateStr != "" {
 		if parsed, err := parseDate(dateStr); err == nil {
 			dates.support = &parsed
 		}
 	}
 
-	// Parse extended support
-	if cycle.ExtendedSupport != nil {
-		dates.extendedSupport = a.parseExtendedSupport(cycle.ExtendedSupport, dates.eol)
+	switch v := cycle.ExtendedSupport.(type) {
+	case string:
+		if v != "" && v != falseBool {
+			if parsed, err := parseDate(v); err == nil {
+				dates.extendedSupport = &parsed
+			}
+		}
+	case bool:
+		if v {
+			dates.extendedTrue = true
+		}
 	}
 
 	return dates
 }
 
-// parseExtendedSupport handles the extended support field which can be string or bool
-func (a *StandardSchemaAdapter) parseExtendedSupport(extSupport interface{}, eolDate *time.Time) *time.Time {
-	switch v := extSupport.(type) {
-	case string:
-		if v != "" && v != falseBool {
-			if parsed, err := parseDate(v); err == nil {
-				return &parsed
-			}
-		}
-	case bool:
-		// If boolean true, use EOL date as extended support end
-		if v && eolDate != nil {
-			return eolDate
-		}
-	}
-	return nil
+// derivedBoundaries collapses the raw parsed dates into the three
+// semantic boundaries the policy layer cares about.
+type derivedBoundaries struct {
+	standardEnd *time.Time // last day of standard (free) support
+	extendedEnd *time.Time // last day of extended (paid) support, if any
+	trueEOL     *time.Time // last day the version is supported at all
 }
 
-// setLifecycleStatus determines lifecycle status flags based on dates
-func (a *StandardSchemaAdapter) setLifecycleStatus(lifecycle *types.VersionLifecycle, dates lifecycleDates) {
+func (a *StandardSchemaAdapter) deriveBoundaries(dates lifecycleDates) derivedBoundaries {
+	b := derivedBoundaries{}
+
+	switch {
+	case dates.extendedSupport != nil:
+		// Extended support window with an explicit end date (Aurora,
+		// ElastiCache, or any product that ships an extendedSupport
+		// date alongside eol/support).
+		b.extendedEnd = dates.extendedSupport
+		b.trueEOL = dates.extendedSupport
+		switch {
+		case dates.support != nil:
+			b.standardEnd = dates.support
+		case dates.eol != nil:
+			// AWS pattern: no `support` field — `eol` is end of standard support
+			// because `extendedSupport` is the real terminal date.
+			b.standardEnd = dates.eol
+		}
+	case dates.extendedTrue && dates.eol != nil:
+		// Legacy boolean: treat eol as the extended-support end.
+		b.extendedEnd = dates.eol
+		b.trueEOL = dates.eol
+		if dates.support != nil {
+			b.standardEnd = dates.support
+		}
+	default:
+		// No extended support concept — the standard pattern.
+		b.trueEOL = dates.eol
+		if dates.support != nil {
+			b.standardEnd = dates.support
+		}
+	}
+
+	return b
+}
+
+func (a *StandardSchemaAdapter) classify(lifecycle *types.VersionLifecycle, b derivedBoundaries) {
 	now := time.Now()
 
-	// If we have an EOL date and we're past it, mark as EOL
-	if dates.eol != nil && now.After(*dates.eol) {
+	switch {
+	case b.trueEOL != nil && now.After(*b.trueEOL):
+		// Past true end of life — no support of any kind remains.
 		lifecycle.IsEOL = true
 		lifecycle.IsSupported = false
 		lifecycle.IsDeprecated = true
-		return
-	}
-
-	// If we have extended support end and we're past standard support
-	if dates.extendedSupport != nil && dates.support != nil && now.After(*dates.support) {
-		a.setExtendedSupportStatus(lifecycle, dates, now)
-		return
-	}
-
-	// If we're past support date but no extended support info
-	if dates.support != nil && now.After(*dates.support) {
-		lifecycle.IsDeprecated = true
-		lifecycle.IsSupported = false
-		// If we have EOL date and not past it yet, not EOL
-		if dates.eol != nil && now.Before(*dates.eol) {
-			lifecycle.IsEOL = false
-		}
-		return
-	}
-
-	// Still in standard support
-	lifecycle.IsSupported = true
-	lifecycle.IsDeprecated = false
-	lifecycle.IsEOL = false
-}
-
-// setExtendedSupportStatus handles status when in or past extended support window
-func (a *StandardSchemaAdapter) setExtendedSupportStatus(lifecycle *types.VersionLifecycle, dates lifecycleDates, now time.Time) {
-	if now.Before(*dates.extendedSupport) {
-		// In extended support window
+	case b.extendedEnd != nil && b.standardEnd != nil &&
+		now.After(*b.standardEnd) && now.Before(*b.extendedEnd):
+		// In the paid extended-support window.
 		lifecycle.IsSupported = true
 		lifecycle.IsExtendedSupport = true
 		lifecycle.IsDeprecated = true
-	} else {
-		// Past extended support
-		lifecycle.IsEOL = true
-		lifecycle.IsSupported = false
+	case b.standardEnd != nil && now.After(*b.standardEnd):
+		// Past standard support but no extended support is available
+		// (or we're past it without a true-EOL date pinning RED).
 		lifecycle.IsDeprecated = true
+		lifecycle.IsSupported = false
+	default:
+		// Still in standard support, or no date info at all.
+		lifecycle.IsSupported = true
 	}
 }
 
-// AdaptCycle converts a ProductCycle to VersionLifecycle using standard semantics
+// AdaptCycle converts a ProductCycle to VersionLifecycle using the
+// standard semantics described in the StandardSchemaAdapter doc.
 func (a *StandardSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionLifecycle, error) {
 	lifecycle := &types.VersionLifecycle{
 		Version:   cycle.Cycle,
@@ -131,36 +157,81 @@ func (a *StandardSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionL
 		FetchedAt: time.Now(),
 	}
 
-	// Parse release date
 	if cycle.ReleaseDate != "" {
 		if releaseDate, err := parseDate(cycle.ReleaseDate); err == nil {
 			lifecycle.ReleaseDate = &releaseDate
 		}
 	}
 
-	// Parse lifecycle dates
 	dates := a.parseCycleDates(cycle)
+	b := a.deriveBoundaries(dates)
 
-	// Set dates on lifecycle
-	lifecycle.EOLDate = dates.eol
-	lifecycle.DeprecationDate = dates.support
-	lifecycle.ExtendedSupportEnd = dates.extendedSupport
+	lifecycle.DeprecationDate = b.standardEnd
+	lifecycle.ExtendedSupportEnd = b.extendedEnd
+	lifecycle.EOLDate = b.trueEOL
 
-	// Determine lifecycle status
-	a.setLifecycleStatus(lifecycle, dates)
+	a.classify(lifecycle, b)
 
 	return lifecycle, nil
 }
 
-// EKSSchemaAdapter handles amazon-eks product with NON-STANDARD schema
-// EKS semantics (DIFFERENT from standard):
-//   - cycle.support → DeprecationDate (end of standard support) ✅ Same
-//   - cycle.eol → ExtendedSupportEnd (NOT true EOL!) ⚠️ DIFFERENT
-//   - cycle.extendedSupport → boolean flag (NOT a date) ⚠️ DIFFERENT
-//   - EKS has NO true EOL (clusters keep running forever)
+// EKSSchemaAdapter handles amazon-eks, whose cycles ship in a shape
+// that disagrees with the standard schema in two ways:
+//
+//   - There is no `support` field; `cycle.eol` is the end of *standard*
+//     support (start of paid extended support), not a true terminal date.
+//   - `cycle.extendedSupport` is now a *date* (the end of paid extended
+//     support); it used to be a boolean and the adapter still tolerates
+//     that legacy shape.
+//   - EKS clusters never truly stop working, so we always leave
+//     lifecycle.EOLDate = nil. Past-extended-support is still classified
+//     RED via `IsDeprecated && !IsExtendedSupport`, matching the prior
+//     product behavior of urging upgrades.
 type EKSSchemaAdapter struct{}
 
-// AdaptCycle converts EKS ProductCycle to VersionLifecycle using EKS-specific semantics
+// parseEKSExtendedEnd resolves cycle.extendedSupport into an end date.
+// The current schema uses a date string; older cycles used boolean
+// `true` to mean "extended support exists, ends at cycle.eol", so we
+// fall back to standardEnd in that case to keep upgrade nudges firing.
+func (a *EKSSchemaAdapter) parseEKSExtendedEnd(extSupport interface{}, standardEnd *time.Time) *time.Time {
+	switch v := extSupport.(type) {
+	case string:
+		if v != "" && v != falseBool {
+			if parsed, err := parseDate(v); err == nil {
+				return &parsed
+			}
+		}
+	case bool:
+		if v && standardEnd != nil {
+			return standardEnd
+		}
+	}
+	return nil
+}
+
+// classifyEKS sets the lifecycle status flags from the derived
+// boundaries. EKS has no true EOL, so past-extended-support is
+// represented as RED via IsDeprecated && !IsExtendedSupport.
+func (a *EKSSchemaAdapter) classifyEKS(lifecycle *types.VersionLifecycle, standardEnd, extendedEnd *time.Time) {
+	now := time.Now()
+	switch {
+	case extendedEnd != nil && now.After(*extendedEnd):
+		// Past extended support — AWS no longer issues patches.
+		lifecycle.IsSupported = false
+		lifecycle.IsDeprecated = true
+		lifecycle.IsExtendedSupport = false
+	case standardEnd != nil && now.After(*standardEnd):
+		// In the paid extended-support window.
+		lifecycle.IsSupported = true
+		lifecycle.IsExtendedSupport = true
+		lifecycle.IsDeprecated = true
+	default:
+		// Still in standard support (or no date info at all).
+		lifecycle.IsSupported = true
+	}
+}
+
+// AdaptCycle converts an amazon-eks ProductCycle to VersionLifecycle.
 func (a *EKSSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionLifecycle, error) {
 	lifecycle := &types.VersionLifecycle{
 		Version:   cycle.Cycle,
@@ -169,67 +240,36 @@ func (a *EKSSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionLifecy
 		FetchedAt: time.Now(),
 	}
 
-	// Parse release date (standard)
 	if cycle.ReleaseDate != "" {
 		if releaseDate, err := parseDate(cycle.ReleaseDate); err == nil {
 			lifecycle.ReleaseDate = &releaseDate
 		}
 	}
 
-	// Parse standard support end (standard)
-	var supportDate *time.Time
-	if dateStr := anyToDateString(cycle.Support); dateStr != "" {
-		if parsed, err := parseDate(dateStr); err == nil {
-			supportDate = &parsed
-			lifecycle.DeprecationDate = supportDate
-		}
-	}
-
-	// ⚠️ NON-STANDARD: cycle.EOL → ExtendedSupportEnd (NOT EOLDate!)
-	var extendedSupportEnd *time.Time
+	// cycle.eol is end-of-standard-support for amazon-eks.
+	var standardEnd *time.Time
 	if dateStr := anyToDateString(cycle.EOL); dateStr != "" {
 		if parsed, err := parseDate(dateStr); err == nil {
-			extendedSupportEnd = &parsed
-			lifecycle.ExtendedSupportEnd = &parsed
+			standardEnd = &parsed
 		}
 	}
-
-	// EKS has NO true EOL (clusters keep running forever)
+	lifecycle.DeprecationDate = standardEnd
+	lifecycle.ExtendedSupportEnd = a.parseEKSExtendedEnd(cycle.ExtendedSupport, standardEnd)
+	// EKS has no true EOL — clusters keep running indefinitely.
 	lifecycle.EOLDate = nil
 
-	// Determine lifecycle status
-	now := time.Now()
-
-	if extendedSupportEnd != nil && now.After(*extendedSupportEnd) {
-		// Past extended support
-		lifecycle.IsEOL = false // NOT true EOL, just no AWS support
-		lifecycle.IsSupported = false
-		lifecycle.IsDeprecated = true
-		lifecycle.IsExtendedSupport = false
-	} else if supportDate != nil && now.After(*supportDate) {
-		// In extended support window
-		lifecycle.IsSupported = true
-		lifecycle.IsExtendedSupport = true
-		lifecycle.IsDeprecated = true
-		lifecycle.IsEOL = false
-	} else {
-		// Still in standard support
-		lifecycle.IsSupported = true
-		lifecycle.IsDeprecated = false
-		lifecycle.IsEOL = false
-		lifecycle.IsExtendedSupport = false
-	}
+	a.classifyEKS(lifecycle, standardEnd, lifecycle.ExtendedSupportEnd)
 
 	return lifecycle, nil
 }
 
-// SchemaAdapters is a registry of available schema adapters
+// SchemaAdapters is a registry of available schema adapters.
 var SchemaAdapters = map[string]SchemaAdapter{
 	"standard":    &StandardSchemaAdapter{},
 	"eks_adapter": &EKSSchemaAdapter{},
 }
 
-// GetSchemaAdapter returns the appropriate schema adapter for a product
+// GetSchemaAdapter returns the appropriate schema adapter for a product.
 func GetSchemaAdapter(schemaName string) (SchemaAdapter, error) {
 	adapter, ok := SchemaAdapters[schemaName]
 	if !ok {
