@@ -231,17 +231,23 @@ func TestParseResourceRow(t *testing.T) {
 	// In v2, name/account_id/region are no longer typed: they're
 	// declared in field_mappings like any other Extra key and routed
 	// verbatim into Resource.Extra under their YAML logical name.
+	// resource_id and tags are now mandatory in the YAML — there is
+	// no Go-side fallback for either column.
 	cfg := config.ResourceConfig{
 		ID:            "aurora-postgresql",
 		Type:          "aurora",
 		CloudProvider: "aws",
 		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+			},
 			FieldMappings: map[string]string{
 				"name":       "name",
 				"account_id": "cloudAccount.externalId",
 				"region":     "region",
 				"version":    "versionDetails.version",
 				"engine":     "typeFields.kind",
+				"tags":       "tags",
 			},
 		},
 		Transforms: auroraTransforms(),
@@ -250,13 +256,13 @@ func TestParseResourceRow(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0,
-		colHeaderName:            1,
-		colHeaderAccountID:       2,
-		colHeaderRegion:          3,
-		"versionDetails.version": 4,
-		"typeFields.kind":        5,
-		colHeaderTags:            6,
+		"externalId":              0,
+		"name":                    1,
+		"cloudAccount.externalId": 2,
+		"region":                  3,
+		"versionDetails.version":  4,
+		"typeFields.kind":         5,
+		"tags":                    6,
 	}
 
 	tagsJSON := `[{"key":"app","value":"my-service"},{"key":"brand","value":"afterpay"}]`
@@ -304,9 +310,13 @@ func TestParseResourceRow_PopulatesExtraFields(t *testing.T) {
 		Type:          "aurora",
 		CloudProvider: "aws",
 		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+			},
 			FieldMappings: map[string]string{
 				"version": "versionDetails.version",
 				"engine":  "typeFields.kind",
+				"tags":    "tags",
 				// Two extra YAML keys that don't map to typed fields.
 				"owner":       "tags.owner",
 				"cost_center": "tags.cost-center",
@@ -317,15 +327,15 @@ func TestParseResourceRow_PopulatesExtraFields(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0,
-		colHeaderName:            1,
-		colHeaderAccountID:       2,
-		colHeaderRegion:          3,
-		"versionDetails.version": 4,
-		"typeFields.kind":        5,
-		colHeaderTags:            6,
-		"tags.owner":             7,
-		"tags.cost-center":       8,
+		"externalId":              0,
+		"name":                    1,
+		"cloudAccount.externalId": 2,
+		"region":                  3,
+		"versionDetails.version":  4,
+		"typeFields.kind":         5,
+		"tags":                    6,
+		"tags.owner":              7,
+		"tags.cost-center":        8,
 	}
 
 	row := []string{
@@ -393,13 +403,13 @@ func TestParseResourceRow_ConfigurableResourceIDColumn(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0, // Wiz internal hash (should be ignored)
-		colHeaderName:            1,
-		colHeaderAccountID:       2,
-		colHeaderRegion:          3,
-		"versionDetails.version": 4,
-		colHeaderTags:            5,
-		"providerUniqueId":       6,
+		"externalId":              0, // Wiz internal hash (should be ignored)
+		"name":                    1,
+		"cloudAccount.externalId": 2,
+		"region":                  3,
+		"versionDetails.version":  4,
+		"tags":                    5,
+		"providerUniqueId":        6,
 	}
 
 	row := []string{
@@ -496,21 +506,32 @@ func TestGetRequiredColumns_ConfigurableResourceIDColumn(t *testing.T) {
 
 	assert.Contains(t, columns, "providerUniqueId",
 		"required columns should reflect the configured resource_id mapping")
-	assert.NotContains(t, columns, colHeaderExternalID,
+	assert.NotContains(t, columns, "externalId",
 		"the default externalId column should not be required when overridden")
 }
 
-func TestParseResourceRow_MissingRequiredFields(t *testing.T) {
+// TestParseResourceRow_MissingResourceIDColumn verifies that when the
+// configured resource_id column is absent from the CSV header, the
+// parser returns a clear error citing the column name. The loader
+// guarantees resource_id is in required_mappings, so this test
+// exercises the runtime mismatch case (e.g. a typo'd column name in
+// the YAML that matches no Wiz CSV header).
+func TestParseResourceRow_MissingResourceIDColumn(t *testing.T) {
 	cfg := config.ResourceConfig{
 		ID:            "test",
 		Type:          "aurora",
 		CloudProvider: "aws",
+		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+			},
+		},
 	}
 
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderName: 0,
+		"name": 0,
 	}
 
 	row := []string{"test-name"}
@@ -543,10 +564,10 @@ func TestParseResourceRow_NoExtrasWhenOnlyTypedKeysMapped(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0,
+		"externalId":             0,
 		"versionDetails.version": 1,
 		"typeFields.kind":        2,
-		colHeaderTags:            3,
+		"tags":                   3,
 	}
 
 	row := []string{
@@ -590,13 +611,13 @@ func TestParseResourceRow_ReadsFromRequiredMappings(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0,
-		colHeaderName:            1,
-		colHeaderAccountID:       2,
-		colHeaderRegion:          3,
-		"versionDetails.version": 4,
-		"typeFields.kind":        5,
-		colHeaderTags:            6,
+		"externalId":              0,
+		"name":                    1,
+		"cloudAccount.externalId": 2,
+		"region":                  3,
+		"versionDetails.version":  4,
+		"typeFields.kind":         5,
+		"tags":                    6,
 	}
 
 	row := []string{
@@ -628,12 +649,16 @@ func TestGetRequiredColumns(t *testing.T) {
 	// only show up in the required column set when explicitly mapped.
 	cfg := config.ResourceConfig{
 		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+			},
 			FieldMappings: map[string]string{
 				"name":       "name",
 				"account_id": "cloudAccount.externalId",
 				"region":     "region",
 				"version":    "versionDetails.version",
 				"engine":     "typeFields.kind",
+				"tags":       "tags",
 			},
 		},
 	}
@@ -641,41 +666,44 @@ func TestGetRequiredColumns(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 	columns := source.getRequiredColumns()
 
-	// Typed defaults always present.
-	assert.Contains(t, columns, colHeaderExternalID)
-	assert.Contains(t, columns, colHeaderNativeType)
-	assert.Contains(t, columns, colHeaderTags)
-
 	// Mapped typed columns.
+	assert.Contains(t, columns, "externalId")
+	assert.Contains(t, columns, colHeaderNativeType)
+	assert.Contains(t, columns, "tags")
 	assert.Contains(t, columns, "versionDetails.version")
 	assert.Contains(t, columns, "typeFields.kind")
 
 	// Mapped Extra columns flow through too.
-	assert.Contains(t, columns, colHeaderName)
-	assert.Contains(t, columns, colHeaderAccountID)
-	assert.Contains(t, columns, colHeaderRegion)
+	assert.Contains(t, columns, "name")
+	assert.Contains(t, columns, "cloudAccount.externalId")
+	assert.Contains(t, columns, "region")
 }
 
-func TestGetRequiredColumns_NoMappings(t *testing.T) {
+// TestGetRequiredColumns_OnlyResourceID verifies the minimal column
+// set when only resource_id (the loader-required mapping) is declared:
+// the resource_id column itself plus the always-required nativeType
+// filter column. tags is omitted from the column set when YAML doesn't
+// declare it — there is no Go-side default that silently adds "tags".
+func TestGetRequiredColumns_OnlyResourceID(t *testing.T) {
 	cfg := config.ResourceConfig{
 		Inventory: config.InventoryConfig{
-			FieldMappings: map[string]string{},
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+			},
 		},
 	}
 
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 	columns := source.getRequiredColumns()
 
-	// In v2, the base column set is just the typed defaults: the
-	// resource_id default (externalId), nativeType, and tags.
-	assert.Contains(t, columns, colHeaderExternalID)
+	assert.Contains(t, columns, "externalId")
 	assert.Contains(t, columns, colHeaderNativeType)
-	assert.Contains(t, columns, colHeaderTags)
-	assert.Len(t, columns, 3, "v2 base column set is exactly: externalId, nativeType, tags")
-	// And confirm the v1 typed-default columns are gone.
-	assert.NotContains(t, columns, colHeaderName)
-	assert.NotContains(t, columns, colHeaderAccountID)
-	assert.NotContains(t, columns, colHeaderRegion)
+	assert.Len(t, columns, 2, "minimal v2 column set is exactly: <resource_id>, nativeType")
+	assert.NotContains(t, columns, "tags",
+		"tags is not implicitly added — must be declared in YAML")
+	assert.NotContains(t, columns, "name")
+	assert.NotContains(t, columns, "cloudAccount.externalId")
+	assert.NotContains(t, columns, "region")
 }
 
 func TestListResources_NoReportID(t *testing.T) {
@@ -750,7 +778,7 @@ func lambdaTransforms() config.TransformsConfig {
 	return config.TransformsConfig{
 		Version: &config.VersionTransform{
 			ExtractJSONField: &config.ExtractJSONFieldOp{
-				FromColumn:  colHeaderGraphProperties,
+				FromColumn:  "graphEntity.properties",
 				Field:       "runtime",
 				SkipIfEmpty: true,
 			},
@@ -786,6 +814,7 @@ func TestParseResourceRow_Lambda(t *testing.T) {
 				"account_id":  "cloudAccount.externalId",
 				"name":        "name",
 				"resource_id": "externalId",
+				"tags":        "tags",
 			},
 		},
 		Transforms: lambdaTransforms(),
@@ -794,12 +823,12 @@ func TestParseResourceRow_Lambda(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0,
-		colHeaderName:            1,
-		colHeaderAccountID:       2,
-		colHeaderRegion:          3,
-		colHeaderTags:            4,
-		colHeaderGraphProperties: 5,
+		"externalId":              0,
+		"name":                    1,
+		"cloudAccount.externalId": 2,
+		"region":                  3,
+		"tags":                    4,
+		"graphEntity.properties":  5,
 	}
 
 	tagsJSON := `[{"key":"app","value":"my-function"},{"key":"brand","value":"brand-a"}]`
@@ -848,12 +877,12 @@ func TestParseResourceRow_LambdaNoRuntime(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID:      0,
-		colHeaderName:            1,
-		colHeaderAccountID:       2,
-		colHeaderRegion:          3,
-		colHeaderTags:            4,
-		colHeaderGraphProperties: 5,
+		"externalId":              0,
+		"name":                    1,
+		"cloudAccount.externalId": 2,
+		"region":                  3,
+		"tags":                    4,
+		"graphEntity.properties":  5,
 	}
 
 	row := []string{
@@ -895,7 +924,7 @@ func TestGetRequiredColumns_DerivedFromTransform(t *testing.T) {
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 	columns := source.getRequiredColumns()
 
-	assert.Contains(t, columns, colHeaderGraphProperties,
+	assert.Contains(t, columns, "graphEntity.properties",
 		"extract_json_field.from_column must be added to required columns")
 }
 
@@ -964,18 +993,24 @@ func TestListResources_LambdaFixture(t *testing.T) {
 }
 
 func TestParseResourceRow_WithContextTime(t *testing.T) {
+	// resource_id mapping is required — the implicit "externalId" fallback
+	// was removed so YAML typos fail fast instead of being silently
+	// papered over by a hardcoded Go-side default.
 	cfg := config.ResourceConfig{
 		ID:            "test",
 		Type:          "aurora",
 		CloudProvider: "aws",
+		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{"resource_id": "externalId"},
+		},
 	}
 
 	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
 
 	cols := columnIndex{
-		colHeaderExternalID: 0,
-		colHeaderName:       1,
-		colHeaderAccountID:  2,
+		"externalId":              0,
+		"name":                    1,
+		"cloudAccount.externalId": 2,
 	}
 
 	row := []string{

@@ -43,15 +43,15 @@ func TestClient_GetReportData_Success(t *testing.T) {
 
 	// Verify: Header row (using actual column names from fixture)
 	cols := buildColumnIndex(rows[0])
-	assert.Equal(t, "externalId", rows[0][cols[colHeaderExternalID]])
-	assert.Equal(t, "name", rows[0][cols[colHeaderName]])
-	assert.Equal(t, "typeFields.kind", rows[0][cols[colHeaderEngineKind]])
+	assert.Equal(t, "externalId", rows[0][cols["externalId"]])
+	assert.Equal(t, "name", rows[0][cols["name"]])
+	assert.Equal(t, "typeFields.kind", rows[0][cols["typeFields.kind"]])
 
 	// Verify: First data row (legacy-mysql-56)
-	assert.Equal(t, "arn:aws:rds:us-east-1:123456789012:cluster:legacy-mysql-56", cols.col(rows[1], colHeaderExternalID))
-	assert.Equal(t, "legacy-mysql-56", cols.col(rows[1], colHeaderName))
-	assert.Equal(t, "5.6.10a", cols.col(rows[1], colHeaderVersion))
-	assert.Equal(t, "AmazonAuroraMySQL", cols.col(rows[1], colHeaderEngineKind))
+	assert.Equal(t, "arn:aws:rds:us-east-1:123456789012:cluster:legacy-mysql-56", cols.col(rows[1], "externalId"))
+	assert.Equal(t, "legacy-mysql-56", cols.col(rows[1], "name"))
+	assert.Equal(t, "5.6.10a", cols.col(rows[1], "versionDetails.version"))
+	assert.Equal(t, "AmazonAuroraMySQL", cols.col(rows[1], "typeFields.kind"))
 
 	// Verify: All mocks were called
 	mockWizClient.AssertExpectations(t)

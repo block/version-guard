@@ -22,7 +22,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	vgconfig "github.com/block/Version-Guard/pkg/config"
-	"github.com/block/Version-Guard/pkg/detector/generic"
 	"github.com/block/Version-Guard/pkg/eol"
 	eolendoflife "github.com/block/Version-Guard/pkg/eol/endoflife"
 	"github.com/block/Version-Guard/pkg/inventory"
@@ -245,11 +244,14 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	// Create registry client (optional, for service lookups)
 	var registryClient registry.Client
 
-	// Initialize detectors from config
-	// Keyed by config ID (not resource type) to support multiple resources
-	// of the same type (e.g., aurora-postgresql and aurora-mysql both type "aurora")
-	fmt.Println("\nInitializing detectors from configuration...")
-	detectors := make(map[types.ResourceType]interface{})
+	// Initialize per-resource inventory sources and EOL providers from
+	// config. Both maps are keyed by config ID (not resource type) so
+	// multiple resources of the same type (e.g. aurora-postgresql and
+	// aurora-mysql both type "aurora") get independent providers and
+	// caches. The detection workflow's activities consume both maps —
+	// there is no Go-side detector instance anymore; the orchestrator
+	// fans out activities directly.
+	fmt.Println("\nConfiguring inventory sources and EOL providers...")
 	invSources := make(map[types.ResourceType]inventory.InventorySource)
 	eolProviders := make(map[types.ResourceType]eol.Provider)
 
@@ -297,17 +299,13 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		configID := types.ResourceType(resourceCfg.ID)
 		invSources[configID] = invSource
 		eolProviders[configID] = eolProvider
-
-		// Create generic detector
-		detector := generic.NewDetector(resourceCfg, invSource, eolProvider, policyEngine, logger)
-		detectors[configID] = detector
-		fmt.Printf("    ✓ Generic detector initialized for %s\n", resourceCfg.ID)
+		fmt.Printf("    ✓ %s configured\n", resourceCfg.ID)
 	}
 
-	if len(detectors) == 0 {
-		return fmt.Errorf("no detectors configured - check your config file and Wiz credentials")
+	if len(invSources) == 0 {
+		return fmt.Errorf("no resources configured - check your config file and Wiz credentials")
 	}
-	fmt.Printf("\n✓ Total detectors initialized: %d\n", len(detectors))
+	fmt.Printf("\n✓ Total resources configured: %d\n", len(invSources))
 
 	// Build the canonical list of resource types to scan from the loaded
 	// YAML config. We iterate resourcesConfig.Resources (YAML order is

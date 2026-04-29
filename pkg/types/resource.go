@@ -2,26 +2,25 @@ package types
 
 import "time"
 
-// ResourceType represents the type of cloud resource
+// ResourceType represents the type of cloud resource. Production code
+// uses YAML-declared config IDs (e.g. "aurora-mysql", "eks") as
+// ResourceType values; the named constants below are retained only as
+// fixture identifiers for tests in pkg/snapshot, pkg/store, and the
+// detection/orchestrator workflows. Adding a new resource type is a
+// resources.yaml change and does not require a constant here.
 type ResourceType string
 
 const (
-	// ResourceTypeAurora represents AWS Aurora RDS clusters
+	// ResourceTypeAurora is a fixture identifier used by tests.
 	ResourceTypeAurora ResourceType = "AURORA"
-	// ResourceTypeElastiCache represents AWS ElastiCache clusters
+	// ResourceTypeElastiCache is a fixture identifier used by tests.
 	ResourceTypeElastiCache ResourceType = "ELASTICACHE"
-	// ResourceTypeOpenSearch represents AWS OpenSearch clusters
+	// ResourceTypeOpenSearch is a fixture identifier used by tests.
 	ResourceTypeOpenSearch ResourceType = "OPENSEARCH"
-	// ResourceTypeEKS represents AWS Elastic Kubernetes Service clusters
+	// ResourceTypeEKS is a fixture identifier used by tests.
 	ResourceTypeEKS ResourceType = "EKS"
-	// ResourceTypeLambda represents AWS Lambda functions
+	// ResourceTypeLambda is a fixture identifier used by tests.
 	ResourceTypeLambda ResourceType = "LAMBDA"
-	// ResourceTypeCloudSQL represents GCP Cloud SQL instances (future)
-	ResourceTypeCloudSQL ResourceType = "CLOUDSQL"
-	// ResourceTypeMemorystore represents GCP Memorystore instances (future)
-	ResourceTypeMemorystore ResourceType = "MEMORYSTORE"
-	// ResourceTypeGKE represents GCP Google Kubernetes Engine clusters (future)
-	ResourceTypeGKE ResourceType = "GKE"
 )
 
 // String returns the string representation of the ResourceType

@@ -135,24 +135,27 @@ var wellKnownFieldMappingKeys = map[string]struct{}{
 	"tags":        {},
 }
 
-// column returns the CSV column to use for the given field-mapping key,
-// falling back to defaultCol when the resource config does not declare
-// the mapping. This makes every well-known field driven by YAML rather
-// than hard-coded constants, so a new resource type can use a different
-// Wiz column without code changes (e.g. EKS using "providerUniqueId"
-// instead of "externalId").
+// column returns the CSV column declared in the YAML for the given
+// mapping key, or "" when the key is not declared. Required and
+// optional mappings are checked together; a mapping is valid wherever
+// it lives in the YAML. The loader has already rejected duplicates,
+// so at most one of the two maps will hit.
 //
-// Required and optional mappings are checked together; a mapping is
-// valid wherever it lives in the YAML. The loader has already
-// rejected duplicates, so at most one of the two maps will hit.
-func (s *GenericInventorySource) column(key, defaultCol string) string {
+// There is no Go-side default — every Wiz column name flows from the
+// YAML so that adding a resource (or routing one through a different
+// Wiz column, e.g. EKS using "providerUniqueId" instead of
+// "externalId") is a YAML-only change. resource_id is guaranteed
+// present by the loader (required_mappings.resource_id is mandatory),
+// so callers can pass the result straight to cols.require without a
+// nil check.
+func (s *GenericInventorySource) column(key string) string {
 	if mapped, ok := s.config.Inventory.RequiredMappings[key]; ok && mapped != "" {
 		return mapped
 	}
 	if mapped, ok := s.config.Inventory.FieldMappings[key]; ok && mapped != "" {
 		return mapped
 	}
-	return defaultCol
+	return ""
 }
 
 // allMappings returns the union of required_mappings and field_mappings.
@@ -173,25 +176,30 @@ func (s *GenericInventorySource) allMappings() map[string]string {
 }
 
 // getRequiredColumns builds the list of CSV columns the parser will read,
-// derived entirely from field_mappings (with Wiz defaults for the typed
-// keys: resource_id and tags).
+// derived entirely from the YAML mappings.
 //
 // The "nativeType" column is always required because it is used to filter
-// rows down to the resource type before any field extraction happens.
+// rows down to the resource type before any field extraction happens —
+// it is a Wiz CSV format invariant, not a user-mapped field.
+//
+// resource_id is always present (the loader rejects configs without it
+// in required_mappings); tags is included only if the YAML declares it.
 func (s *GenericInventorySource) getRequiredColumns() []string {
 	columns := []string{
-		s.column("resource_id", colHeaderExternalID),
+		s.column("resource_id"),
 		colHeaderNativeType,
-		s.column("tags", colHeaderTags),
+	}
+	if tagsCol := s.column("tags"); tagsCol != "" {
+		columns = append(columns, tagsCol)
 	}
 
 	// Add version if mapped
-	if v := s.column("version", ""); v != "" {
+	if v := s.column("version"); v != "" {
 		columns = append(columns, v)
 	}
 
 	// Add engine if mapped
-	if e := s.column("engine", ""); e != "" {
+	if e := s.column("engine"); e != "" {
 		columns = append(columns, e)
 	}
 
@@ -271,13 +279,13 @@ func (s *GenericInventorySource) parseResourceRow(
 	cols columnIndex,
 	row []string,
 ) (*types.Resource, error) {
-	resourceID, err := cols.require(row, s.column("resource_id", colHeaderExternalID))
+	resourceID, err := cols.require(row, s.column("resource_id"))
 	if err != nil {
 		return nil, err
 	}
 
-	rawVersion := cols.col(row, s.column("version", ""))
-	rawEngine := cols.col(row, s.column("engine", ""))
+	rawVersion := cols.col(row, s.column("version"))
+	rawEngine := cols.col(row, s.column("engine"))
 
 	// Apply YAML-declared transforms. The carve-outs that used to
 	// live as `if s.config.Type == "lambda"` etc. are now expressed
@@ -295,8 +303,10 @@ func (s *GenericInventorySource) parseResourceRow(
 	}
 	engine := applyEngineTransform(rawEngine, version, s.config.Transforms.Engine)
 
-	// Parse tags to extract service
-	tagsJSON := cols.col(row, s.column("tags", colHeaderTags))
+	// Parse tags to extract service. s.column("tags") returns "" when
+	// YAML omits tags, in which case cols.col looks up the empty
+	// column name (always "") and ParseTags handles "" as no-tags.
+	tagsJSON := cols.col(row, s.column("tags"))
 	tags, err := ParseTags(tagsJSON)
 	if err != nil {
 		s.logger.WarnContext(ctx, "failed to parse tags",
