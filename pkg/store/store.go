@@ -28,7 +28,7 @@ type Store interface {
 // FindingFilters defines optional filters for querying findings.
 //
 // Filterable attributes are limited to the typed Finding surface.
-// Account ID and region moved into Finding.Extra in snapshot v2 and
+// Account ID and region moved into Finding.Extra in snapshot v2+ and
 // are no longer filterable through this interface; consumers that
 // need to slice on those should iterate findings and read Extra
 // directly.

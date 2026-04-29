@@ -458,15 +458,14 @@ s3://your-bucket/snapshots/latest.json
 ```json
 {
   "snapshot_id": "scan-2026-04-09-123456",
-  "version": "v1",
+  "version": "v3",
   "generated_at": "2026-04-09T12:34:56Z",
   "findings_by_type": {
     "aurora": [
       {
         "resource_id": "db-cluster-1",
         "status": "red",
-        "message": "Running deprecated version 13.3 (EOL: 2025-03-01)",
-        "recommendation": "Upgrade to version 15.5 or later"
+        "message": "Running deprecated version 13.3 (EOL: 2025-03-01)"
       }
     ]
   },

@@ -37,10 +37,12 @@ func TestStandardSchemaAdapter_CurrentVersion(t *testing.T) {
 	assert.NotNil(t, lifecycle.EOLDate)
 }
 
-func TestStandardSchemaAdapter_DeprecatedVersion(t *testing.T) {
+func TestStandardSchemaAdapter_DeprecatedSupportWindow(t *testing.T) {
 	adapter := &StandardSchemaAdapter{}
 
-	// Version past standard support but before EOL
+	// Version past standard support but before EOL, with no
+	// extendedSupport field. This is deprecated support, not paid
+	// extended support.
 	cycle := &ProductCycle{
 		Cycle:       "15.0",
 		ReleaseDate: "2023-01-15",
@@ -51,8 +53,10 @@ func TestStandardSchemaAdapter_DeprecatedVersion(t *testing.T) {
 	lifecycle, err := adapter.AdaptCycle(cycle)
 	require.NoError(t, err)
 
-	assert.False(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
+	assert.True(t, lifecycle.IsDeprecatedSupport)
+	assert.False(t, lifecycle.IsExtendedSupport)
 	assert.False(t, lifecycle.IsEOL)
 }
 
@@ -256,22 +260,8 @@ func eksDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
 	return adapter
 }
 
-func lambdaDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
-	t.Helper()
-
-	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
-		DeprecationDate:     LifecycleDateSource{Field: lifecycleFieldSupport},
-		ExtendedSupportEnd:  LifecycleDateSource{Field: lifecycleFieldEOL},
-		EOLDate:             LifecycleDateSource{Field: lifecycleFieldEOL},
-		DeprecatedWindow:    lifecycleActionExtendedSupport,
-		PastExtendedSupport: lifecycleActionEOL,
-	})
-	require.NoError(t, err)
-	return adapter
-}
-
-func TestDeclarativeSchemaAdapter_LambdaDeprecatedSupportWindow(t *testing.T) {
-	adapter := lambdaDeclarativeAdapter(t)
+func TestStandardSchemaAdapter_LambdaDeprecatedSupportWindow(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
 
 	pastYear := time.Now().Year() - 1
 	futureYear := time.Now().Year() + 1
@@ -289,16 +279,16 @@ func TestDeclarativeSchemaAdapter_LambdaDeprecatedSupportWindow(t *testing.T) {
 	assert.Empty(t, lifecycle.Engine)
 	assert.True(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
-	assert.True(t, lifecycle.IsExtendedSupport)
+	assert.True(t, lifecycle.IsDeprecatedSupport)
+	assert.False(t, lifecycle.IsExtendedSupport)
 	assert.False(t, lifecycle.IsEOL)
 	assert.NotNil(t, lifecycle.DeprecationDate)
-	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
+	assert.Nil(t, lifecycle.ExtendedSupportEnd)
 	assert.NotNil(t, lifecycle.EOLDate)
-	assert.Equal(t, *lifecycle.EOLDate, *lifecycle.ExtendedSupportEnd)
 }
 
-func TestDeclarativeSchemaAdapter_LambdaPastDeprecatedSupport(t *testing.T) {
-	adapter := lambdaDeclarativeAdapter(t)
+func TestStandardSchemaAdapter_LambdaPastDeprecatedSupport(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
 
 	cycle := &ProductCycle{
 		Cycle:       "nodejs12.x",
@@ -312,12 +302,13 @@ func TestDeclarativeSchemaAdapter_LambdaPastDeprecatedSupport(t *testing.T) {
 
 	assert.False(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
+	assert.False(t, lifecycle.IsDeprecatedSupport)
 	assert.False(t, lifecycle.IsExtendedSupport)
 	assert.True(t, lifecycle.IsEOL)
 }
 
-func TestDeclarativeSchemaAdapter_LambdaCurrentStandardSupport(t *testing.T) {
-	adapter := lambdaDeclarativeAdapter(t)
+func TestStandardSchemaAdapter_LambdaCurrentStandardSupport(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
 
 	futureYear := time.Now().Year() + 1
 	cycle := &ProductCycle{

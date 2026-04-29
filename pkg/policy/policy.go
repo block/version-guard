@@ -11,9 +11,6 @@ type VersionPolicy interface {
 	// GetMessage generates a human-readable message describing the status
 	GetMessage(resource *types.Resource, lifecycle *types.VersionLifecycle, status types.Status) string
 
-	// GetRecommendation generates a recommendation for addressing the issue
-	GetRecommendation(resource *types.Resource, lifecycle *types.VersionLifecycle, status types.Status) string
-
 	// Name returns the name of this policy
 	Name() string
 }

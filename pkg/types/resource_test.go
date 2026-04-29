@@ -60,13 +60,13 @@ func TestStatBucket_JSONShape(t *testing.T) {
 	assert.Equal(t, float64(60), decoded["compliance_percentage"])
 }
 
-// TestSnapshot_JSONShape locks the v2 top-level snapshot wire keys.
+// TestSnapshot_JSONShape locks the current top-level snapshot wire keys.
 // PR #41 stabilized this shape; reordering or renaming any key here is
 // a breaking wire-format change and should be intentional.
 func TestSnapshot_JSONShape(t *testing.T) {
 	s := Snapshot{
 		SnapshotID:      "snap-1",
-		Version:         "v2",
+		Version:         "v3",
 		ScanDurationSec: 60,
 		FindingsByType:  map[ResourceType][]*Finding{},
 		Summary:         SnapshotSummary{},

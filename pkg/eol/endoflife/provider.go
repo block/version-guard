@@ -119,16 +119,9 @@ func (p *Provider) Engines() []string {
 // on the returned VersionLifecycle for downstream display; product
 // resolution comes from p.product, set at construction time.
 //
-// Every returned lifecycle (matched, prefix-matched, or unknown) carries
-// the product-wide RecommendedVersion — the latest currently-supported
-// cycle the provider knows about — so the policy layer can suggest a
-// concrete upgrade target without re-querying the provider.
-//
 // Concurrency note: this function MUST NOT mutate the *VersionLifecycle
 // pointers it gets back from ListAllVersions — those are shared across
-// concurrent callers via the cache. RecommendedVersion is therefore
-// stamped onto every cached lifecycle once, at cache-population time
-// inside ListAllVersions, and we read it from there.
+// concurrent callers via the cache.
 func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version string) (*types.VersionLifecycle, error) {
 	engine = strings.ToLower(engine)
 	version = strings.TrimSpace(version)
@@ -169,90 +162,13 @@ func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version stri
 	// Alternative (rejected): Return error - would cause workflow to skip resource,
 	// losing visibility into resources with incomplete EOL data coverage.
 	//
-	// We still want the unknown lifecycle to carry the product-wide
-	// recommendation fields so the policy layer can suggest an
-	// upgrade target even when the resource's exact version isn't on
-	// endoflife.date yet. It's safe to read them off the first
-	// cached lifecycle (every entry carries the same values, stamped
-	// once at cache-population time); empty if the cache itself is
-	// empty (404 product / no cycles).
-	var recommended, recommendedNonExt string
-	if len(versions) > 0 {
-		recommended = versions[0].RecommendedVersion
-		recommendedNonExt = versions[0].RecommendedNonExtendedVersion
-	}
 	return &types.VersionLifecycle{
-		Version:                       "", // Empty = unknown data, not unsupported version
-		Engine:                        engine,
-		IsSupported:                   false,
-		Source:                        p.Name(),
-		FetchedAt:                     time.Now(),
-		RecommendedVersion:            recommended,
-		RecommendedNonExtendedVersion: recommendedNonExt,
+		Version:     "", // Empty = unknown data, not unsupported version
+		Engine:      engine,
+		IsSupported: false,
+		Source:      p.Name(),
+		FetchedAt:   time.Now(),
 	}, nil
-}
-
-// latestSupportedVersion picks the upgrade target the policy layer
-// should recommend for this product as a *general* target — non-extended
-// preferred, but extended fallback allowed so the user always gets
-// *some* concrete cycle to point at on RED / YELLOW-approaching-EOL.
-// If a stricter "must not be in extended support" answer is required
-// (the YELLOW IsExtendedSupport branch needs this — see the comment
-// on RecommendedNonExtendedVersion), use latestNonExtendedSupportedVersion
-// instead.
-//
-// PRECONDITION: versions MUST be in newest-first order. We rely on
-// endoflife.date returning cycles newest-first, and ListAllVersions
-// preserves that ordering verbatim through convertCycle. The contract
-// is pinned by TestProvider_ListAllVersions_PreservesCycleOrder so a
-// future caching/reordering refactor that breaks the invariant fails
-// loudly in CI rather than silently mis-recommending older cycles.
-//
-// Within that ordering we take the first cycle that is still
-// supported and not already in (paid) extended support — that's the
-// freshest cycle a customer can move to without paying the
-// extended-support premium.
-//
-// If every supported cycle is in extended support (the product is
-// fully past standard support across the board), we fall back to the
-// newest extended-support cycle so the user still gets *some* concrete
-// target. If nothing is supported at all, return "" — the policy layer
-// is responsible for the no-target fallback message.
-func latestSupportedVersion(versions []*types.VersionLifecycle) string {
-	var extendedFallback string
-	for _, v := range versions {
-		if !v.IsSupported {
-			continue
-		}
-		if !v.IsExtendedSupport {
-			return v.Version
-		}
-		if extendedFallback == "" {
-			extendedFallback = v.Version
-		}
-	}
-	return extendedFallback
-}
-
-// latestNonExtendedSupportedVersion picks the strictest upgrade target:
-// the newest cycle that is BOTH IsSupported AND NOT IsExtendedSupport.
-// Returns "" when no such cycle exists (every supported cycle for the
-// product is already in extended support).
-//
-// The empty-string contract is meaningful — it tells the policy
-// layer's YELLOW IsExtendedSupport branch that suggesting any concrete
-// target would falsely claim "Upgrade to <X> to avoid extended
-// support costs" while <X> is itself in extended support. See
-// pkg/policy/default.go's getYellowRecommendation.
-//
-// Same newest-first PRECONDITION as latestSupportedVersion.
-func latestNonExtendedSupportedVersion(versions []*types.VersionLifecycle) string {
-	for _, v := range versions {
-		if v.IsSupported && !v.IsExtendedSupport {
-			return v.Version
-		}
-	}
-	return ""
 }
 
 // ListAllVersions retrieves all versions for the provider's product.
@@ -322,22 +238,6 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 				continue
 			}
 			versions = append(versions, lifecycle)
-		}
-
-		// Stamp the product-wide upgrade recommendations onto every
-		// cached lifecycle exactly once, before publishing to the
-		// cache. After this point versions[i].RecommendedVersion and
-		// versions[i].RecommendedNonExtendedVersion are immutable for
-		// the lifetime of this cache entry — concurrent readers in
-		// GetVersionLifecycle observe a stable value without further
-		// synchronization. Both fields are computed here (rather than
-		// derived in the policy layer) so the policy doesn't need to
-		// rescan the cycles slice on every finding.
-		recommended := latestSupportedVersion(versions)
-		recommendedNonExt := latestNonExtendedSupportedVersion(versions)
-		for _, v := range versions {
-			v.RecommendedVersion = recommended
-			v.RecommendedNonExtendedVersion = recommendedNonExt
 		}
 
 		// Cache the result
