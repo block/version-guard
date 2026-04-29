@@ -111,7 +111,21 @@ resources:
     eol:
       provider: endoflife-date
       product: amazon-eks
-      schema: eks_adapter
+      schema: declarative
+      lifecycle:
+        # EKS cycle.eol is the end of standard support, not true EOL.
+        deprecation_date:
+          field: eol
+        # Current EKS data uses extendedSupport as a date; archived data
+        # used boolean true, so fall back to eol for replay safety.
+        extended_support_end:
+          field: extendedSupport
+          bool_true_fallback: eol
+        deprecated_window: extended_support
+        # EKS clusters keep running after extended support, but AWS stops
+        # patching them. Leave eol_date unset and classify post-extended as
+        # unsupported rather than true EOL.
+        past_extended_support: unsupported
 
   # ElastiCache is split per-engine because each engine has its own
   # endoflife.date product with different lifecycle semantics, and Wiz
@@ -299,7 +313,19 @@ resources:
     eol:
       provider: endoflife-date
       product: aws-lambda
-      schema: standard
+      schema: declarative
+      lifecycle:
+        # Lambda uses "Standard Support" and "Deprecated Support" instead
+        # of extendedSupport. Treat the deprecated-support window as the
+        # same YELLOW warning state Version Guard uses for extended support.
+        deprecation_date:
+          field: support
+        extended_support_end:
+          field: eol
+        eol_date:
+          field: eol
+        deprecated_window: extended_support
+        past_extended_support: eol
 
   # To add a new resource type, follow skills/add-version-guard-resource.
   # Standalone copy-paste templates live in skills/add-version-guard-resource/examples/.

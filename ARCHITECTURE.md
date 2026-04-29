@@ -96,7 +96,15 @@ resources:
     eol:
       provider: endoflife-date       # EOL data provider
       product: amazon-eks            # endoflife.date product ID
-      schema: eks_adapter            # Schema adapter (standard or eks_adapter)
+      schema: declarative            # YAML-defined lifecycle semantics
+      lifecycle:
+        deprecation_date:
+          field: eol
+        extended_support_end:
+          field: extendedSupport
+          bool_true_fallback: eol
+        deprecated_window: extended_support
+        past_extended_support: unsupported
 ```
 
 **Environment Variable:**
@@ -292,12 +300,12 @@ type Provider interface {
 ```
 
 **Implementations:**
-- `endoflife.Provider` - endoflife.date HTTP API (config-driven via `eol.product` + `eol.schema`)
+- `endoflife.Provider` - endoflife.date HTTP API (config-driven via `eol.product`, `eol.schema`, and optional `eol.lifecycle`)
 - `mock.EOLProvider` - For testing
 
 **Single-Source Strategy:**
 - All EOL data comes from endoflife.date — no cloud provider credentials required for lifecycle lookups.
-- Per-product semantics are handled by schema adapters (`standard`, `eks_adapter`, …) selected from YAML.
+- Per-product semantics are handled by either the built-in `standard` schema or a YAML-defined `declarative` lifecycle block.
 
 ### 3. VersionPolicy
 
@@ -729,7 +737,8 @@ narrow — no expressions, one named op per field. Full reference:
 **EOL Configuration:**
 - `provider`: Currently only `endoflife-date` supported
 - `product`: The endoflife.date product ID (e.g., `postgresql`, `amazon-eks`)
-- `schema`: Adapter for EOL data semantics (`standard` or `eks_adapter`)
+- `schema`: EOL data semantics (`standard` or `declarative`)
+- `lifecycle`: Required for `schema: declarative`; maps upstream fields into deprecation, extended-support, and EOL boundaries
 
 ### 3. Add Report ID to Environment Variable
 

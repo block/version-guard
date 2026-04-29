@@ -275,7 +275,14 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		// Create EOL provider based on config
 		var eolProvider eol.Provider
 		if resourceCfg.EOL.Provider == "endoflife-date" {
-			provider, err := eolendoflife.NewProvider(eolHTTPClient, resourceCfg.EOL.Product, resourceCfg.EOL.Schema, cacheTTL, logger)
+			provider, err := eolendoflife.NewProviderWithLifecycle(
+				eolHTTPClient,
+				resourceCfg.EOL.Product,
+				resourceCfg.EOL.Schema,
+				resourceCfg.EOL.Lifecycle,
+				cacheTTL,
+				logger,
+			)
 			if err != nil {
 				return fmt.Errorf("failed to create EOL provider for %s: %w", resourceCfg.ID, err)
 			}

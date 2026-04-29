@@ -313,12 +313,11 @@ func TestProvider_Engines(t *testing.T) {
 	}
 }
 
-// TestProvider_EKS pins the EKS-adapter wiring: when the YAML declares
-// schema: eks_adapter, the provider must dispatch cycle conversion
-// through the EKS adapter (NOT the standard one) so EKS's non-standard
-// endoflife.date schema (cycle.eol = end of EXTENDED support, not true
-// EOL) is interpreted correctly.
-func TestProvider_EKS(t *testing.T) {
+// TestProvider_DeclarativeLifecycle pins the YAML-driven lifecycle
+// wiring: when the resource declares a lifecycle block, the provider
+// must dispatch cycle conversion through the declarative adapter so
+// product-specific endoflife.date field semantics stay out of Go code.
+func TestProvider_DeclarativeLifecycle(t *testing.T) {
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
 			if product != "amazon-eks" {
@@ -335,9 +334,25 @@ func TestProvider_EKS(t *testing.T) {
 		},
 	}
 
-	provider, err := NewProvider(mockClient, "amazon-eks", "eks_adapter", 1*time.Hour, nil)
+	lifecycleConfig := &DeclarativeLifecycleConfig{
+		DeprecationDate: LifecycleDateSource{Field: lifecycleFieldEOL},
+		ExtendedSupportEnd: LifecycleDateSource{
+			Field:            lifecycleFieldExtendedSupport,
+			BoolTrueFallback: lifecycleFieldEOL,
+		},
+		DeprecatedWindow:    lifecycleActionExtendedSupport,
+		PastExtendedSupport: lifecycleActionUnsupported,
+	}
+	provider, err := NewProviderWithLifecycle(
+		mockClient,
+		"amazon-eks",
+		"declarative",
+		lifecycleConfig,
+		1*time.Hour,
+		nil,
+	)
 	if err != nil {
-		t.Fatalf("NewProvider() error = %v", err)
+		t.Fatalf("NewProviderWithLifecycle() error = %v", err)
 	}
 
 	engines := []string{"kubernetes", "k8s", "eks"}
@@ -354,15 +369,23 @@ func TestProvider_EKS(t *testing.T) {
 			if v.Version != "1.32" {
 				t.Errorf("Expected version 1.32, got %s", v.Version)
 			}
-			// EKS adapter: cycle.EOL → ExtendedSupportEnd; EOLDate stays nil
+			// Declarative EKS config: cycle.EOL → DeprecationDate and
+			// cycle.ExtendedSupport → ExtendedSupportEnd. EOLDate stays nil
 			// because EKS clusters never truly EOL.
 			if v.EOLDate != nil {
 				t.Errorf("EOLDate = %v, want nil (EKS has no true EOL)", v.EOLDate)
 			}
 			if v.ExtendedSupportEnd == nil {
-				t.Error("ExtendedSupportEnd should be set from cycle.EOL under eks_adapter")
+				t.Error("ExtendedSupportEnd should be set from cycle.ExtendedSupport")
 			}
 		})
+	}
+}
+
+func TestNewProvider_DeclarativeLifecycleRequiresConfig(t *testing.T) {
+	_, err := NewProviderWithLifecycle(&MockClient{}, "amazon-eks", "declarative", nil, 1*time.Hour, nil)
+	if err == nil {
+		t.Fatal("expected error for declarative schema without lifecycle config")
 	}
 }
 

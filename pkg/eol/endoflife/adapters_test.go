@@ -240,8 +240,104 @@ func TestStandardSchemaAdapter_ExtendedSupportOverridesPastEOL(t *testing.T) {
 	assert.True(t, lifecycle.IsDeprecated)
 }
 
-func TestEKSSchemaAdapter_CurrentVersion(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+func eksDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
+	t.Helper()
+
+	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
+		DeprecationDate: LifecycleDateSource{Field: lifecycleFieldEOL},
+		ExtendedSupportEnd: LifecycleDateSource{
+			Field:            lifecycleFieldExtendedSupport,
+			BoolTrueFallback: lifecycleFieldEOL,
+		},
+		DeprecatedWindow:    lifecycleActionExtendedSupport,
+		PastExtendedSupport: lifecycleActionUnsupported,
+	})
+	require.NoError(t, err)
+	return adapter
+}
+
+func lambdaDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
+	t.Helper()
+
+	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
+		DeprecationDate:     LifecycleDateSource{Field: lifecycleFieldSupport},
+		ExtendedSupportEnd:  LifecycleDateSource{Field: lifecycleFieldEOL},
+		EOLDate:             LifecycleDateSource{Field: lifecycleFieldEOL},
+		DeprecatedWindow:    lifecycleActionExtendedSupport,
+		PastExtendedSupport: lifecycleActionEOL,
+	})
+	require.NoError(t, err)
+	return adapter
+}
+
+func TestDeclarativeSchemaAdapter_LambdaDeprecatedSupportWindow(t *testing.T) {
+	adapter := lambdaDeclarativeAdapter(t)
+
+	pastYear := time.Now().Year() - 1
+	futureYear := time.Now().Year() + 1
+	cycle := &ProductCycle{
+		Cycle:       "python3.8",
+		ReleaseDate: "2019-11-18",
+		Support:     time.Date(pastYear, 10, 14, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+		EOL:         time.Date(futureYear, 9, 30, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.Equal(t, "python3.8", lifecycle.Version)
+	assert.Empty(t, lifecycle.Engine)
+	assert.True(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+	assert.True(t, lifecycle.IsExtendedSupport)
+	assert.False(t, lifecycle.IsEOL)
+	assert.NotNil(t, lifecycle.DeprecationDate)
+	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
+	assert.NotNil(t, lifecycle.EOLDate)
+	assert.Equal(t, *lifecycle.EOLDate, *lifecycle.ExtendedSupportEnd)
+}
+
+func TestDeclarativeSchemaAdapter_LambdaPastDeprecatedSupport(t *testing.T) {
+	adapter := lambdaDeclarativeAdapter(t)
+
+	cycle := &ProductCycle{
+		Cycle:       "nodejs12.x",
+		ReleaseDate: "2019-11-18",
+		Support:     "2023-03-31",
+		EOL:         "2023-04-30",
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.False(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+	assert.False(t, lifecycle.IsExtendedSupport)
+	assert.True(t, lifecycle.IsEOL)
+}
+
+func TestDeclarativeSchemaAdapter_LambdaCurrentStandardSupport(t *testing.T) {
+	adapter := lambdaDeclarativeAdapter(t)
+
+	futureYear := time.Now().Year() + 1
+	cycle := &ProductCycle{
+		Cycle:       "python3.13",
+		ReleaseDate: "2024-11-14",
+		Support:     time.Date(futureYear, 6, 30, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+		EOL:         time.Date(futureYear+1, 8, 31, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.True(t, lifecycle.IsSupported)
+	assert.False(t, lifecycle.IsDeprecated)
+	assert.False(t, lifecycle.IsExtendedSupport)
+	assert.False(t, lifecycle.IsEOL)
+}
+
+func TestDeclarativeSchemaAdapter_EKSCurrentVersion(t *testing.T) {
+	adapter := eksDeclarativeAdapter(t)
 
 	// Live amazon-eks shape: cycle.eol is end-of-standard-support and
 	// cycle.extendedSupport is end-of-extended-support. Both in the
@@ -258,7 +354,7 @@ func TestEKSSchemaAdapter_CurrentVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "1.31", lifecycle.Version)
-	assert.Equal(t, "eks", lifecycle.Engine)
+	assert.Empty(t, lifecycle.Engine)
 	assert.True(t, lifecycle.IsSupported)
 	assert.False(t, lifecycle.IsDeprecated)
 	assert.False(t, lifecycle.IsEOL)
@@ -272,8 +368,8 @@ func TestEKSSchemaAdapter_CurrentVersion(t *testing.T) {
 	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
 }
 
-func TestEKSSchemaAdapter_InExtendedSupport(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+func TestDeclarativeSchemaAdapter_EKSInExtendedSupport(t *testing.T) {
+	adapter := eksDeclarativeAdapter(t)
 
 	// Past cycle.eol (end of standard support) but before cycle.extendedSupport
 	// (end of extended support) → IN extended support → YELLOW.
@@ -295,8 +391,8 @@ func TestEKSSchemaAdapter_InExtendedSupport(t *testing.T) {
 	assert.True(t, lifecycle.IsExtendedSupport)
 }
 
-func TestEKSSchemaAdapter_PastExtendedSupport(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+func TestDeclarativeSchemaAdapter_EKSPastExtendedSupport(t *testing.T) {
+	adapter := eksDeclarativeAdapter(t)
 
 	// Past both cycle.eol AND cycle.extendedSupport — AWS no longer patches.
 	cycle := &ProductCycle{
@@ -315,8 +411,8 @@ func TestEKSSchemaAdapter_PastExtendedSupport(t *testing.T) {
 	assert.False(t, lifecycle.IsExtendedSupport)
 }
 
-func TestEKSSchemaAdapter_NoTrueEOL(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+func TestDeclarativeSchemaAdapter_EKSNoTrueEOL(t *testing.T) {
+	adapter := eksDeclarativeAdapter(t)
 
 	cycle := &ProductCycle{
 		Cycle:           "1.20",
@@ -342,13 +438,13 @@ func TestEKSSchemaAdapter_NoTrueEOL(t *testing.T) {
 	assert.Equal(t, expectedStd, *lifecycle.DeprecationDate)
 }
 
-// TestEKSSchemaAdapter_LegacyBooleanExtendedSupport guards the
+// TestDeclarativeSchemaAdapter_EKSLegacyBooleanExtendedSupport guards the
 // pre-2026 amazon-eks shape where cycle.extendedSupport was a boolean.
-// Live data now uses dates, but the adapter still tolerates the
+// Live data now uses dates, but the YAML bool_true_fallback still tolerates the
 // legacy boolean so a hypothetical replay against archived JSON
 // classifies clusters consistently.
-func TestEKSSchemaAdapter_LegacyBooleanExtendedSupport(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+func TestDeclarativeSchemaAdapter_EKSLegacyBooleanExtendedSupport(t *testing.T) {
+	adapter := eksDeclarativeAdapter(t)
 
 	// Past cycle.eol with extendedSupport=true bool — the bool falls
 	// back to standardEnd as the extended-support boundary, so we
@@ -375,10 +471,19 @@ func TestGetSchemaAdapter_Standard(t *testing.T) {
 	assert.IsType(t, &StandardSchemaAdapter{}, adapter)
 }
 
-func TestGetSchemaAdapter_EKS(t *testing.T) {
-	adapter, err := GetSchemaAdapter("eks_adapter")
+func TestNewDeclarativeSchemaAdapter_Validation(t *testing.T) {
+	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
+		DeprecationDate:  LifecycleDateSource{Field: lifecycleFieldSupport},
+		DeprecatedWindow: lifecycleActionExtendedSupport,
+	})
 	require.NoError(t, err)
-	assert.IsType(t, &EKSSchemaAdapter{}, adapter)
+	assert.IsType(t, &DeclarativeSchemaAdapter{}, adapter)
+
+	_, err = NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
+		DeprecationDate: LifecycleDateSource{Field: "unsupportedField"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported field")
 }
 
 func TestGetSchemaAdapter_Unknown(t *testing.T) {
@@ -410,8 +515,8 @@ func TestStandardSchemaAdapter_EmptyDates(t *testing.T) {
 	assert.False(t, lifecycle.IsDeprecated)
 }
 
-func TestEKSSchemaAdapter_EmptyDates(t *testing.T) {
-	adapter := &EKSSchemaAdapter{}
+func TestDeclarativeSchemaAdapter_EmptyDates(t *testing.T) {
+	adapter := eksDeclarativeAdapter(t)
 
 	cycle := &ProductCycle{
 		Cycle:       "1.32",
