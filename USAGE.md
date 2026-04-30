@@ -348,13 +348,21 @@ temporal workflow observe --workflow-id <workflow-id> --namespace version-guard-
 
 #### Metrics to Track
 
-Version Guard emits the following metrics (if Datadog enabled):
-- `version_guard.findings.red` - Critical issues count
-- `version_guard.findings.yellow` - Warning issues count
-- `version_guard.findings.total` - Total resources scanned
-- `version_guard.compliance_percentage` - Fleet compliance %
-- `version_guard.detection.duration_ms` - Scan duration
-- `version_guard.inventory.fetch` - Inventory fetch success rate
+Version Guard enables the Temporal Go SDK metrics handler by default and exposes
+Prometheus/OpenMetrics metrics on `:9090/metrics`.
+
+Useful SDK metrics include:
+- `temporal_workflow_completed_total`
+- `temporal_workflow_failed_total`
+- `temporal_workflow_endtoend_latency_seconds`
+- `temporal_workflow_task_schedule_to_start_latency_seconds`
+- `temporal_activity_execution_failed_total`
+- `temporal_activity_execution_latency_seconds`
+- `temporal_request_failure_total`
+- `temporal_request_latency_seconds`
+
+Set `TEMPORAL_METRICS_ENABLED=false` to disable the handler, or
+`TEMPORAL_METRICS_LISTEN_ADDRESS=0.0.0.0:9091` to change the listen address.
 
 #### Logs
 

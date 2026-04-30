@@ -44,9 +44,11 @@ var version = "dev"
 //nolint:govet // field alignment sacrificed for logical grouping
 type ServerCLI struct {
 	// Temporal configuration
-	TemporalEndpoint  string `help:"Temporal server endpoint" default:"localhost:7233" env:"TEMPORAL_ENDPOINT"`
-	TemporalNamespace string `help:"Temporal namespace" default:"version-guard-dev" env:"TEMPORAL_NAMESPACE"`
-	TemporalTaskQueue string `help:"Temporal task queue" default:"version-guard-detection" env:"TEMPORAL_TASK_QUEUE"`
+	TemporalEndpoint             string `help:"Temporal server endpoint" default:"localhost:7233" env:"TEMPORAL_ENDPOINT"`
+	TemporalNamespace            string `help:"Temporal namespace" default:"version-guard-dev" env:"TEMPORAL_NAMESPACE"`
+	TemporalTaskQueue            string `help:"Temporal task queue" default:"version-guard-detection" env:"TEMPORAL_TASK_QUEUE"`
+	TemporalMetricsEnabled       bool   `help:"Enable Temporal SDK metrics" default:"true" env:"TEMPORAL_METRICS_ENABLED"`
+	TemporalMetricsListenAddress string `help:"Prometheus listen address for Temporal SDK metrics" default:"0.0.0.0:9090" env:"TEMPORAL_METRICS_LISTEN_ADDRESS"`
 
 	// Wiz configuration (optional - falls back to mock if not provided)
 	WizClientIDSecret      string `help:"Wiz client ID" env:"WIZ_CLIENT_ID_SECRET"`
@@ -138,6 +140,8 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  Wiz Cache TTL: %d hours\n", s.WizCacheTTLHours)
 		fmt.Printf("  AWS Region: %s\n", s.AWSRegion)
 		fmt.Printf("  S3 Prefix: %s\n", s.S3Prefix)
+		fmt.Printf("  Temporal Metrics: enabled=%t listen=%s\n",
+			s.TemporalMetricsEnabled, s.TemporalMetricsListenAddress)
 		fmt.Printf("  Tag Keys - App: %s\n", s.TagAppKeys)
 		if s.ScheduleEnabled {
 			fmt.Printf("  Schedule: enabled (cron: %s, id: %s, jitter: %s)\n",
@@ -178,7 +182,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	}
 
 	// Initialize Temporal client
-	temporalClient, err := client.Dial(client.Options{
+	temporalClientOptions := client.Options{
 		HostPort:  s.TemporalEndpoint,
 		Namespace: s.TemporalNamespace,
 		ConnectionOptions: client.ConnectionOptions{
@@ -186,7 +190,22 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(20 * 1024 * 1024)), // 20MB for large Wiz reports
 			},
 		},
-	})
+	}
+	if s.TemporalMetricsEnabled {
+		metricsHandler, metricsCloser, metricsErr := newTemporalMetricsHandler(s.TemporalMetricsListenAddress)
+		if metricsErr != nil {
+			return metricsErr
+		}
+		defer func() {
+			if closeErr := metricsCloser.Close(); closeErr != nil {
+				slog.Warn("failed to close temporal metrics server", "error", closeErr)
+			}
+		}()
+		temporalClientOptions.MetricsHandler = metricsHandler
+		fmt.Printf("✓ Temporal SDK metrics listening on %s\n", s.TemporalMetricsListenAddress)
+	}
+
+	temporalClient, err := client.Dial(temporalClientOptions)
 	if err != nil {
 		return fmt.Errorf("failed to connect to Temporal at %s: %w", s.TemporalEndpoint, err)
 	}
