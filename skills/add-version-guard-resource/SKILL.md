@@ -203,8 +203,21 @@ Current patterns in `pkg/config/defaults/resources.yaml`:
 | ElastiCache Redis | `"elastiCache/Redis/cluster"` |
 | ElastiCache Valkey | `"elastiCache/Valkey/cluster"` |
 | ElastiCache Memcached | `"elastiCache/Memcached/cluster"` |
-| OpenSearch | `"elasticSearchService\|OpenSearch Domain"` |
+| OpenSearch | (see note below — pipe-delimited alternation) |
 | Lambda | `"lambda"` |
+
+> **Pipe note.** The OpenSearch entry uses pipe-delimited alternation.
+> The literal YAML value (no markdown escaping) is:
+>
+> ```yaml
+> native_type_pattern: "elasticSearchService|OpenSearch Domain"
+> ```
+>
+> The matcher splits on a literal `|` and exact-matches each
+> alternative against the row's `nativeType` column. Do **not** copy a
+> backslash before the pipe — the matcher does not treat `\|` as an
+> escape and the first alternative would become `elasticSearchService\`,
+> silently dropping every Elasticsearch row.
 
 ---
 
@@ -222,16 +235,16 @@ endoflife.date:
 
 **Use `schema: declarative` (with an `eol.lifecycle` block) only when
 the product's field semantics fall outside those three shapes.**
-Currently shipped declarative resources:
+Currently shipped declarative resource:
 
 - **EKS (`amazon-eks`)** — `cycle.eol` is the end of *standard*
   support, not true EOL. Past extended support, AWS keeps the
   cluster running but stops patching, so it's classified as
   `unsupported` rather than EOL.
-- **Lambda (`aws-lambda`)** — uses "Standard Support" /
-  "Deprecated Support" instead of `extendedSupport`. The
-  deprecated-support window maps onto Version Guard's YELLOW
-  extended-support state.
+
+(Lambda ships as `schema: standard` — the standard adapter handles
+its support / deprecated-support / EOL fields. Earlier revisions of
+this skill listed Lambda as declarative; that's no longer the case.)
 
 Inline shape (the EKS block from `resources.yaml`):
 
