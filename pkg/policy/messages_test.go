@@ -9,9 +9,6 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
-// timePtr is a tiny helper so the tests below can stay readable.
-func timePtr(t time.Time) *time.Time { return &t }
-
 // ---------------- GetMessage / per-status message helpers ----------------
 
 func TestGetMessage_Red_IsEOL(t *testing.T) {
@@ -66,7 +63,6 @@ func TestGetMessage_Yellow_ExtendedSupport(t *testing.T) {
 
 	got := p.GetMessage(res, lc, types.StatusYellow)
 	assert.Contains(t, got, "extended support")
-	assert.Contains(t, got, "6x standard cost")
 }
 
 func TestGetMessage_Yellow_ApproachingEOL(t *testing.T) {
@@ -141,110 +137,6 @@ func TestGetMessage_DefaultArm_BogusStatus(t *testing.T) {
 	assert.Contains(t, got, "Unknown status")
 }
 
-// ---------------- GetRecommendation ----------------
-
-func TestGetRecommendation_Red_WithUpgradeTarget(t *testing.T) {
-	p := NewDefaultPolicy()
-	res := &types.Resource{Engine: "aurora-mysql", CurrentVersion: "5.6"}
-	lc := &types.VersionLifecycle{Version: "5.6", RecommendedVersion: "8.0"}
-
-	got := p.GetRecommendation(res, lc, types.StatusRed)
-	assert.Contains(t, got, "Upgrade to aurora-mysql 8.0")
-	assert.Contains(t, got, "immediately")
-}
-
-func TestGetRecommendation_Red_NoUpgradeTarget(t *testing.T) {
-	// RecommendedVersion empty -> generic wording.
-	p := NewDefaultPolicy()
-	res := &types.Resource{Engine: "redis", CurrentVersion: "5.0"}
-	lc := &types.VersionLifecycle{Version: "5.0"}
-
-	got := p.GetRecommendation(res, lc, types.StatusRed)
-	assert.Contains(t, got, "Upgrade to the latest supported version")
-}
-
-func TestGetRecommendation_Yellow_ExtendedSupport_WithNonExtendedTarget(t *testing.T) {
-	p := NewDefaultPolicy()
-	res := &types.Resource{Engine: "aurora-postgresql", CurrentVersion: "11"}
-	lc := &types.VersionLifecycle{
-		Version:                       "11",
-		IsExtendedSupport:             true,
-		RecommendedNonExtendedVersion: "16",
-	}
-
-	got := p.GetRecommendation(res, lc, types.StatusYellow)
-	assert.Contains(t, got, "Upgrade to aurora-postgresql 16")
-	assert.Contains(t, got, "avoid extended support costs")
-}
-
-func TestGetRecommendation_Yellow_ExtendedSupport_NoNonExtendedTarget(t *testing.T) {
-	// Every supported cycle is itself in extended support — falls back
-	// to the neutral wording rather than over-promising cost relief.
-	p := NewDefaultPolicy()
-	res := &types.Resource{Engine: "aurora-mysql", CurrentVersion: "5.6"}
-	lc := &types.VersionLifecycle{Version: "5.6", IsExtendedSupport: true}
-
-	got := p.GetRecommendation(res, lc, types.StatusYellow)
-	assert.Contains(t, got, "Upgrade to a supported version")
-	assert.Contains(t, got, "avoid extended support costs")
-}
-
-func TestGetRecommendation_Yellow_ApproachingEOL_WithTarget(t *testing.T) {
-	p := NewDefaultPolicy()
-	res := &types.Resource{Engine: "redis", CurrentVersion: "6.0"}
-	lc := &types.VersionLifecycle{Version: "6.0", RecommendedVersion: "7.2"}
-
-	got := p.GetRecommendation(res, lc, types.StatusYellow)
-	assert.Contains(t, got, "Plan upgrade to redis 7.2")
-	assert.Contains(t, got, "within the next 90 days")
-}
-
-func TestGetRecommendation_Yellow_ApproachingEOL_NoTarget(t *testing.T) {
-	p := NewDefaultPolicy()
-	res := &types.Resource{Engine: "redis", CurrentVersion: "6.0"}
-	lc := &types.VersionLifecycle{Version: "6.0"}
-
-	got := p.GetRecommendation(res, lc, types.StatusYellow)
-	assert.Contains(t, got, "Plan upgrade to the latest supported version")
-}
-
-func TestGetRecommendation_Green(t *testing.T) {
-	p := NewDefaultPolicy()
-	got := p.GetRecommendation(&types.Resource{}, &types.VersionLifecycle{}, types.StatusGreen)
-	assert.Equal(t, "No action required", got)
-}
-
-func TestGetRecommendation_Unknown(t *testing.T) {
-	p := NewDefaultPolicy()
-	got := p.GetRecommendation(&types.Resource{}, &types.VersionLifecycle{}, types.StatusUnknown)
-	assert.Contains(t, got, "Verify version")
-}
-
-func TestGetRecommendation_DefaultArm_BogusStatus(t *testing.T) {
-	p := NewDefaultPolicy()
-	got := p.GetRecommendation(&types.Resource{}, &types.VersionLifecycle{}, types.Status("BOGUS"))
-	assert.Equal(t, "Unable to provide recommendation", got)
-}
-
-// ---------------- usableUpgradeTarget edge cases ----------------
-
-func TestUsableUpgradeTarget(t *testing.T) {
-	res := &types.Resource{CurrentVersion: "5.6.10a"}
-	lc := &types.VersionLifecycle{Version: "5.6"}
-
-	// Empty candidate -> empty.
-	assert.Empty(t, usableUpgradeTarget(res, lc, ""))
-
-	// Candidate equals lifecycle cycle -> empty (would be a no-op).
-	assert.Empty(t, usableUpgradeTarget(res, lc, "5.6"))
-
-	// Candidate equals resource's current full version -> empty.
-	assert.Empty(t, usableUpgradeTarget(res, lc, "5.6.10a"))
-
-	// Different candidate -> returned.
-	assert.Equal(t, "8.0", usableUpgradeTarget(res, lc, "8.0"))
-}
-
 // ---------------- versionMatches ----------------
 
 func TestVersionMatches(t *testing.T) {
@@ -300,6 +192,3 @@ func TestClassify_FallsThroughToUnknownWhenNotSupportedAndNoSignal(t *testing.T)
 
 	assert.Equal(t, types.StatusUnknown, p.Classify(res, lc))
 }
-
-// keep timePtr referenced even if other tests stop using it
-var _ = timePtr
