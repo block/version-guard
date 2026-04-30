@@ -70,7 +70,17 @@ curl -s https://endoflife.date/api/all.json | grep -i "{resource-name}"
 - For "OpenSearch" → search "opensearch"
 - For "RDS MySQL" → search "rds" or "mysql"
 
-**If product NOT found**:
+**If the AWS-flavored product is missing but an upstream product
+exists**: use the upstream product directly. ElastiCache Valkey and
+Memcached follow this pattern today — `amazon-elasticache-valkey`
+and `amazon-elasticache-memcached` don't exist on endoflife.date, so
+`pkg/config/defaults/resources.yaml` ships `product: valkey` and
+`product: memcached` against the upstream cycles. The standard
+adapter handles the upstream "support + eol" shape unchanged.
+
+**If no relevant product exists at all** (neither AWS-flavored nor
+upstream):
+
 - **STOP** and inform user:
   ```
   endoflife.date doesn't have coverage for {resource-name} yet.
@@ -82,7 +92,7 @@ curl -s https://endoflife.date/api/all.json | grep -i "{resource-name}"
   Once the PR is merged, return and use this skill to add Version Guard support.
   ```
 
-**If product found**: Note the exact product name (e.g., `amazon-aurora-postgresql`) and proceed to Step 2.
+**If product found**: Note the exact product name (e.g., `amazon-aurora-postgresql`, or upstream `valkey`) and proceed to Step 2.
 
 ---
 
@@ -173,27 +183,91 @@ Any column referenced by `transforms.version.extract_json_field.from_column`
 (e.g. `graphEntity.properties` for Lambda) is automatically added to
 the required-columns list — you don't need to declare it separately.
 
-**Identify the native_type_pattern**:
-- Aurora: `"rds/AmazonAurora*/cluster"`
-- EKS: `"eks/Cluster"`
-- ElastiCache: `"elastiCache/*/cluster"`
+**Identify the native_type_pattern**. The matcher (see
+`pkg/inventory/wiz/generic.go`) supports either an exact match or a
+pipe-delimited alternation, plus `*` only as a **whole** path
+segment — partial-segment globs like `AmazonAurora*` do NOT work.
+For per-engine variants where each engine has its own product /
+lifecycle, prefer one config per exact pattern over a wildcard +
+post-filter (see ElastiCache below).
 
-Use similar patterns for new resources.
+Current patterns in `pkg/config/defaults/resources.yaml`:
+
+| Resource | `native_type_pattern` |
+|---|---|
+| Aurora PostgreSQL | `"rds/AmazonAuroraPostgreSQL/cluster"` |
+| Aurora MySQL | `"rds/AmazonAuroraMySQL/cluster"` |
+| RDS MySQL | `"rds/MySQL/instance"` |
+| RDS PostgreSQL | `"rds/PostgreSQL/instance"` |
+| EKS | `"cluster"` |
+| ElastiCache Redis | `"elastiCache/Redis/cluster"` |
+| ElastiCache Valkey | `"elastiCache/Valkey/cluster"` |
+| ElastiCache Memcached | `"elastiCache/Memcached/cluster"` |
+| OpenSearch | `"elasticSearchService\|OpenSearch Domain"` |
+| Lambda | `"lambda"` |
 
 ---
 
 ### Step 4: Check for Non-Standard Schema
 
-**Most resources use standard endoflife.date schema** where:
-- `cycle.support` → End of standard support
-- `cycle.eol` → True end of life
-- `cycle.extendedSupport` → End of extended support
+**Most resources use `schema: standard`.** The standard adapter
+already understands the three real-world cycle shapes seen on
+endoflife.date:
 
-**Known non-standard schemas** (use YAML-defined lifecycle semantics):
-- **EKS (amazon-eks)**: `cycle.eol` means "end of standard support" NOT true EOL
-  - Use `schema: declarative` with an `eol.lifecycle` block in config
+| Shape | Example product | Cycle fields present |
+|---|---|---|
+| Plain OSS (no extended support) | `postgresql`, `valkey`, `memcached` | `support` + `eol` |
+| Standard + extended support | `aurora-postgresql`, `rds-mysql` | `support` + `eol` + `extendedSupport` |
+| AWS-without-`support` | `amazon-elasticache-redis` | `eol` + `extendedSupport` |
 
-**Default**: Use `schema: standard` unless you know it's non-standard like EKS.
+**Use `schema: declarative` (with an `eol.lifecycle` block) only when
+the product's field semantics fall outside those three shapes.**
+Currently shipped declarative resources:
+
+- **EKS (`amazon-eks`)** — `cycle.eol` is the end of *standard*
+  support, not true EOL. Past extended support, AWS keeps the
+  cluster running but stops patching, so it's classified as
+  `unsupported` rather than EOL.
+- **Lambda (`aws-lambda`)** — uses "Standard Support" /
+  "Deprecated Support" instead of `extendedSupport`. The
+  deprecated-support window maps onto Version Guard's YELLOW
+  extended-support state.
+
+Inline shape (the EKS block from `resources.yaml`):
+
+```yaml
+    eol:
+      provider: endoflife-date
+      product: amazon-eks
+      schema: declarative
+      lifecycle:
+        deprecation_date:
+          field: eol                      # cycle.eol = end of standard support
+        extended_support_end:
+          field: extendedSupport
+          bool_true_fallback: eol         # archived data used boolean true
+        deprecated_window: extended_support
+        past_extended_support: unsupported
+```
+
+Supported lifecycle field names: `support`, `eol`, `extendedSupport`.
+Supported actions: `extended_support`, `unsupported`, `eol`,
+`supported`.
+**Full reference** with every supported field/action and the
+classification semantics: [`pkg/eol/endoflife/ADAPTERS.md`](../../pkg/eol/endoflife/ADAPTERS.md).
+Worked example file: [`examples/eks.yaml`](examples/eks.yaml).
+
+Loader behavior (`pkg/config/loader.go`):
+- `schema: declarative` without a `lifecycle` block → rejected.
+- A `lifecycle` block without `schema:` set → loader auto-fills
+  `schema: declarative`. Setting `schema: standard` alongside
+  `lifecycle:` is rejected.
+- A `lifecycle` block with no date sources at all → rejected.
+- Lifecycle fields/actions outside the supported sets → rejected.
+
+**Default**: use `schema: standard`. Reach for `declarative` only if
+the upstream cycle data doesn't match one of the three standard
+shapes above.
 
 ---
 
@@ -238,7 +312,7 @@ Example for OpenSearch (uses both a version transform and an engine transform):
     cloud_provider: aws
     inventory:
       source: wiz
-      native_type_pattern: "opensearch/Domain"
+      native_type_pattern: "elasticSearchService|OpenSearch Domain"
       required_mappings:
         # engine is produced by transforms.engine.from_version_major,
         # so it's NOT required here.
@@ -268,13 +342,21 @@ Example for OpenSearch (uses both a version transform and an engine transform):
 **Key points**:
 - Resource `id` is the key in `WIZ_REPORT_IDS` environment variable
 - Append as new entry, don't overwrite existing resources
-- Use `schema: standard` unless resource has non-standard semantics (like EKS)
+- Use `schema: standard` unless resource has non-standard semantics (see Step 4)
 - Transforms are optional — omit the block entirely when the raw column values are already canonical
 
 **Examples**: Load specific example files when:
-- `examples/elasticache.yaml` - Adding cache/Redis/Valkey resources with wildcard native_type_patterns
-- `examples/eks.yaml` - Adding resources requiring non-standard EOL schema adapters
-- `examples/aurora-pg.yaml` - Adding RDS database resources with standard field mappings
+- `examples/elasticache.yaml` — adding a per-engine cache resource
+  (Redis / Valkey / Memcached). Demonstrates the pattern of multiple
+  configs reading the SAME Wiz report, narrowed by exact
+  per-engine `native_type_pattern`. Does NOT use a wildcard
+  pattern — folding engines together silently routes rows to the
+  wrong endoflife.date product.
+- `examples/eks.yaml` — adding a resource that needs `schema:
+  declarative` + a YAML `lifecycle:` block (no Go adapter required).
+- `examples/aurora-pg.yaml` — adding an RDS-family database resource
+  with the standard field mapping shape and an `engine`
+  `substring_lookup` transform.
 
 ---
 
@@ -301,7 +383,7 @@ make test
 - Confirm native_type_pattern matches actual nativeType values in Wiz report
 - Report error to user and **STOP**
 
-**If tests pass**: Proceed to Step 7.
+**If tests pass**: Proceed to Step 8.
 
 ---
 
@@ -329,7 +411,18 @@ Generated via add-version-guard-resource skill"
 
 ## Completion
 
-After successfully adding the resource, provide a concise summary covering: the resource ID added, which endoflife.date product it uses, the schema type (standard or custom adapter), and confirmation that tests passed. Remind the user to add the Wiz report ID to their WIZ_REPORT_IDS environment variable. If a custom schema adapter is needed, mention it requires implementation in pkg/eol/endoflife/adapters.go. Keep the response brief and focused on actionable next steps.
+After successfully adding the resource, provide a concise summary
+covering: the resource ID added, which endoflife.date product it
+uses, the schema type (`standard` or `declarative`), and confirmation
+that tests passed. Remind the user to add the Wiz report ID to their
+`WIZ_REPORT_IDS` environment variable. If the product needs
+non-standard lifecycle semantics, mention that they're declared in
+the YAML `eol.lifecycle` block (no Go change required for the cases
+the declarative DSL covers — see ADAPTERS.md). A custom Go adapter
+in `pkg/eol/endoflife/adapters.go` is only needed when the
+declarative DSL can't express the product's semantics, which is
+exceptional. Keep the response brief and focused on actionable next
+steps.
 
 ---
 
