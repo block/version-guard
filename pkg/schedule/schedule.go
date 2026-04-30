@@ -91,29 +91,30 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 	}
 
 	handle := m.scheduleClient.GetHandle(ctx, cfg.ScheduleID)
-	desc, err := handle.Describe(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to describe existing schedule %q: %w", cfg.ScheduleID, err)
-	}
 
-	// Check if the cron expression or jitter has changed
-	existingSpec := desc.Schedule.Spec
-	if existingSpec == nil {
-		existingSpec = &client.ScheduleSpec{}
-	}
-	existingCrons := existingSpec.CronExpressions
-	if len(existingCrons) == 1 && existingCrons[0] == cfg.CronExpression && existingSpec.Jitter == cfg.Jitter {
-		fmt.Printf("  Schedule %q already configured (cron: %s)\n", cfg.ScheduleID, cfg.CronExpression)
-		return nil
-	}
-
-	// Update the schedule with the new spec.
-	// We replace the entire Spec rather than mutating fields because Temporal
-	// parses CronExpressions into Calendars/StructuredCalendar server-side on
-	// create. On subsequent describes, the cron lives in Calendars and
-	// CronExpressions comes back empty — mutating CronExpressions alone would
-	// leave stale calendars in place, causing the schedule to fire on both
-	// the old and new cadences after every restart with a changed cron.
+	// Always refresh existing schedules with the current Spec AND Action
+	// (Args + TaskQueue) on every startup. The previous "skip when
+	// cron+jitter match" optimization was unsafe: it only diffed Spec
+	// and never touched Action.Args, so a schedule created on an older
+	// code revision (when the orchestrator carried a hardcoded
+	// fallback resource list) kept a now-stale ResourceTypes:null in
+	// its Args forever. After the orchestrator started rejecting empty
+	// ResourceTypes (ErrNoResourceTypes), every cron firing failed
+	// instantly with no log past "Starting orchestrator workflow".
+	//
+	// Args are encoded as opaque payloads in the Temporal Schedule, so
+	// we cannot reliably diff them against cfg.ResourceTypes here.
+	// One Update RPC per pod startup is a trivial cost compared to the
+	// outage risk of silent arg drift; rebuild the schedule
+	// unconditionally and let Temporal handle the no-op case.
+	//
+	// We replace the entire Spec rather than mutating fields because
+	// Temporal parses CronExpressions into Calendars/StructuredCalendar
+	// server-side on create. On subsequent describes, the cron lives
+	// in Calendars and CronExpressions comes back empty — mutating
+	// CronExpressions alone would leave stale calendars in place,
+	// causing the schedule to fire on both the old and new cadences
+	// after every restart with a changed cron.
 	err = handle.Update(ctx, client.ScheduleUpdateOptions{
 		DoUpdate: func(input client.ScheduleUpdateInput) (*client.ScheduleUpdate, error) {
 			input.Description.Schedule.Spec = &client.ScheduleSpec{
@@ -122,6 +123,9 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			}
 			if action, ok := input.Description.Schedule.Action.(*client.ScheduleWorkflowAction); ok {
 				action.TaskQueue = cfg.TaskQueue
+				action.Args = []interface{}{orchestrator.WorkflowInput{
+					ResourceTypes: cfg.ResourceTypes,
+				}}
 			}
 			return &client.ScheduleUpdate{
 				Schedule: &input.Description.Schedule,
@@ -132,7 +136,8 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("failed to update schedule %q: %w", cfg.ScheduleID, err)
 	}
 
-	fmt.Printf("  Schedule %q updated (cron: %s)\n", cfg.ScheduleID, cfg.CronExpression)
+	fmt.Printf("  Schedule %q refreshed (cron: %s, resources: %d)\n",
+		cfg.ScheduleID, cfg.CronExpression, len(cfg.ResourceTypes))
 	return nil
 }
 
