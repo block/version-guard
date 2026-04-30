@@ -29,8 +29,10 @@ type SchemaAdapter interface {
 //     `extendedSupport` is the real terminal date. standardEnd = eol,
 //     extendedEnd = extendedSupport, trueEOL = extendedSupport.
 //
-//  3. support + eol, no extendedSupport — pure OSS pattern (PostgreSQL etc.).
-//     standardEnd = support, trueEOL = eol, no extended-support window.
+//  3. support + eol, no extendedSupport — deprecated-support pattern
+//     (AWS Lambda runtimes, and OSS products with maintenance/security
+//     support after active support). standardEnd = support,
+//     deprecatedSupportEnd = trueEOL = eol, no paid extended-support window.
 //
 // Legacy boolean `extendedSupport: true` is honored: when paired with
 // a date `eol`, the adapter treats `eol` itself as the end of the
@@ -81,9 +83,10 @@ func (a *StandardSchemaAdapter) parseCycleDates(cycle *ProductCycle) lifecycleDa
 // derivedBoundaries collapses the raw parsed dates into the three
 // semantic boundaries the policy layer cares about.
 type derivedBoundaries struct {
-	standardEnd *time.Time // last day of standard (free) support
-	extendedEnd *time.Time // last day of extended (paid) support, if any
-	trueEOL     *time.Time // last day the version is supported at all
+	standardEnd          *time.Time // last day of standard support
+	deprecatedSupportEnd *time.Time // last day of deprecated/non-paid support, if any
+	extendedEnd          *time.Time // last day of extended support, if any
+	trueEOL              *time.Time // last day the version is supported at all
 }
 
 func (a *StandardSchemaAdapter) deriveBoundaries(dates lifecycleDates) derivedBoundaries {
@@ -111,6 +114,14 @@ func (a *StandardSchemaAdapter) deriveBoundaries(dates lifecycleDates) derivedBo
 		if dates.support != nil {
 			b.standardEnd = dates.support
 		}
+	case dates.support != nil && dates.eol != nil && dates.eol.After(*dates.support):
+		// No extendedSupport field: the API is describing a warning
+		// window after active/standard support but before terminal EOL.
+		// This is not paid extended support, so policy must not use
+		// cost-avoidance wording.
+		b.standardEnd = dates.support
+		b.deprecatedSupportEnd = dates.eol
+		b.trueEOL = dates.eol
 	default:
 		// No extended support concept — the standard pattern.
 		b.trueEOL = dates.eol
@@ -137,6 +148,13 @@ func (a *StandardSchemaAdapter) classify(lifecycle *types.VersionLifecycle, b de
 		lifecycle.IsSupported = true
 		lifecycle.IsExtendedSupport = true
 		lifecycle.IsDeprecated = true
+	case b.deprecatedSupportEnd != nil && b.standardEnd != nil &&
+		now.After(*b.standardEnd) && now.Before(*b.deprecatedSupportEnd):
+		// In a deprecated-support window. This remains YELLOW-worthy,
+		// but it is not the paid extended-support state.
+		lifecycle.IsSupported = true
+		lifecycle.IsDeprecated = true
+		lifecycle.IsDeprecatedSupport = true
 	case b.standardEnd != nil && now.After(*b.standardEnd):
 		// Past standard support but no extended support is available
 		// (or we're past it without a true-EOL date pinning RED).

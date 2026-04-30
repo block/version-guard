@@ -142,7 +142,7 @@ func fixtureSnapshot(id string) *types.Snapshot {
 	gen := time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)
 	return &types.Snapshot{
 		SnapshotID:  id,
-		Version:     "v2",
+		Version:     "v3",
 		GeneratedAt: gen,
 		Summary: types.SnapshotSummary{
 			TotalResources:       3,
@@ -170,7 +170,7 @@ func TestS3Store_SaveSnapshot_WritesBothCanonicalAndLatest(t *testing.T) {
 	latest, ok := fake.objects["snapshots/latest.json"]
 	require.True(t, ok, "latest.json must be written")
 	assert.Equal(t, "snap-001", latest.metadata["snapshot-id"])
-	assert.Equal(t, "v2", latest.metadata["schema-version"])
+	assert.Equal(t, "v3", latest.metadata["schema-version"])
 
 	// Locate the timestamped object.
 	var dateKey string
@@ -187,7 +187,7 @@ func TestS3Store_SaveSnapshot_WritesBothCanonicalAndLatest(t *testing.T) {
 	var out types.Snapshot
 	require.NoError(t, json.Unmarshal(latest.body, &out))
 	assert.Equal(t, "snap-001", out.SnapshotID)
-	assert.Equal(t, "v2", out.Version)
+	assert.Equal(t, "v3", out.Version)
 }
 
 func TestS3Store_SaveSnapshot_PutError(t *testing.T) {
@@ -208,7 +208,7 @@ func TestS3Store_GetLatestSnapshot_RoundTrip(t *testing.T) {
 	got, err := store.GetLatestSnapshot(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, "snap-latest", got.SnapshotID)
-	assert.Equal(t, "v2", got.Version)
+	assert.Equal(t, "v3", got.Version)
 	assert.Equal(t, 3, got.Summary.TotalResources)
 }
 

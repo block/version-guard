@@ -47,7 +47,6 @@ Each finding includes:
 - **Current Version**: What's running now
 - **Status**: RED/YELLOW/GREEN
 - **Message**: What's wrong
-- **Recommendation**: What to do
 - **EOL Date**: When version support ends
 
 Examples:
@@ -57,7 +56,6 @@ Resource: arn:aws:rds:us-east-1:123456:cluster:my-db
 Current Version: aurora-mysql 5.6.10a
 Status: RED
 Message: Version is past End-of-Life (EOL since Nov 2024)
-Recommendation: Upgrade to aurora-mysql 8.0.35 immediately
 EOL Date: 2024-11-01
 
 # EKS
@@ -65,7 +63,6 @@ Resource: arn:aws:eks:us-west-2:123456:cluster/my-cluster
 Current Version: k8s-1.27
 Status: YELLOW
 Message: Version in extended support (6x cost), ends 2025-11-24
-Recommendation: Upgrade to k8s-1.31 to exit extended support
 EOL Date: 2025-11-24
 ```
 

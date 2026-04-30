@@ -33,7 +33,6 @@ func (e *LoggingIssueTrackerEmitter) Emit(ctx context.Context, snapshotID string
 			// Would create or update issue
 			fmt.Printf("[%s] %s (%s)\n", f.Status, f.ResourceID, f.ResourceType)
 			fmt.Printf("  Message: %s\n", f.Message)
-			fmt.Printf("  Recommendation: %s\n", f.Recommendation)
 			fmt.Printf("  → Would create/update issue\n\n")
 			created++
 		case types.StatusGreen:

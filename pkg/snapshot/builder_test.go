@@ -143,18 +143,18 @@ func TestBuilder_JSONWireShape(t *testing.T) {
 	}
 }
 
-// TestBuilder_V2SchemaBreakWireShape locks in the v2 break:
+// TestBuilder_CurrentSchemaBreakWireShape locks in the current schema:
 //
-//   - snapshot.Version is "v2"
+//   - snapshot.Version is "v3"
 //   - top-level Finding JSON no longer carries ResourceName,
-//     CloudAccountID, or CloudRegion
+//     CloudAccountID, CloudRegion, or Recommendation
 //   - those values flow through Finding.Extra under the YAML logical
 //     names "name", "account_id", "region"
 //
 // Reverting any of these would silently re-introduce the v1 wire shape
 // downstream tools have been told to drop, so the test fails fast on
 // regressions.
-func TestBuilder_V2SchemaBreakWireShape(t *testing.T) {
+func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 	snap := NewBuilder().
 		AddFindings(types.ResourceTypeAurora, []*types.Finding{
 			{
@@ -173,8 +173,8 @@ func TestBuilder_V2SchemaBreakWireShape(t *testing.T) {
 		}).
 		Build()
 
-	assert.Equal(t, "v2", snap.Version,
-		"snapshot schema must advertise v2 once typed core is tightened")
+	assert.Equal(t, "v3", snap.Version,
+		"snapshot schema must advertise v3 once recommendation is removed")
 
 	raw, err := json.Marshal(snap)
 	require.NoError(t, err)
@@ -192,16 +192,16 @@ func TestBuilder_V2SchemaBreakWireShape(t *testing.T) {
 	finding, ok := auroraFindings[0].(map[string]any)
 	require.True(t, ok)
 
-	// v1 top-level keys must be gone.
-	for _, banned := range []string{"ResourceName", "CloudAccountID", "CloudRegion"} {
+	// Removed top-level keys must stay gone.
+	for _, banned := range []string{"ResourceName", "CloudAccountID", "CloudRegion", "Recommendation"} {
 		_, present := finding[banned]
 		assert.False(t, present,
-			"v2 finding JSON must not contain top-level %q (moved into Extra)", banned)
+			"v3 finding JSON must not contain top-level %q", banned)
 	}
 
 	// The values now live in Extra under their YAML logical names.
 	extra, ok := finding["Extra"].(map[string]any)
-	require.True(t, ok, "v2 finding JSON must carry an Extra map")
+	require.True(t, ok, "v3 finding JSON must carry an Extra map")
 	assert.Equal(t, "c1", extra["name"])
 	assert.Equal(t, "123456789012", extra["account_id"])
 	assert.Equal(t, "us-east-1", extra["region"])

@@ -6,7 +6,7 @@ type Status string
 const (
 	// StatusRed indicates critical issues: past EOL, deprecated, or extended support expired
 	StatusRed Status = "RED"
-	// StatusYellow indicates warnings: in extended support (costly) or approaching EOL (< 90 days)
+	// StatusYellow indicates warnings: in extended/deprecated support or approaching EOL (< 90 days)
 	StatusYellow Status = "YELLOW"
 	// StatusGreen indicates compliant: current supported version
 	StatusGreen Status = "GREEN"

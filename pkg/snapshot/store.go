@@ -17,7 +17,10 @@ import (
 const (
 	// SnapshotSchemaVersion is the current schema version for snapshots.
 	//
-	// v2 (current): tightened the typed Finding surface to only the
+	// v3 (current): removed Finding.Recommendation from the snapshot
+	//   schema; remediation guidance belongs in curated docs, not in
+	//   generated findings.
+	// v2 (deprecated): tightened the typed Finding surface to only the
 	//   fields the system itself requires (identity, EOL keys, service,
 	//   classification metadata, tags). Top-level resource_name,
 	//   cloud_account_id, and cloud_region keys were removed; their
@@ -25,7 +28,7 @@ const (
 	//   ("name", "account_id", "region").
 	// v1 (deprecated): typed Finding included resource_name,
 	//   cloud_account_id, and cloud_region as top-level keys.
-	SnapshotSchemaVersion = "v2"
+	SnapshotSchemaVersion = "v3"
 )
 
 // Store handles persisting snapshots to S3

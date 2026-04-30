@@ -561,133 +561,10 @@ func TestProvider_InterfaceCompliance(t *testing.T) {
 	} = (*Provider)(nil)
 }
 
-// TestLatestSupportedVersion exercises the heuristic that picks the
-// upgrade target the policy layer recommends. Cycles are passed in
-// newest-first to mirror endoflife.date's response ordering.
-func TestLatestSupportedVersion(t *testing.T) {
-	//nolint:govet // field alignment sacrificed for table-test readability
-	tests := []struct {
-		name string
-		in   []*types.VersionLifecycle
-		want string
-	}{
-		{
-			name: "picks newest non-extended supported cycle",
-			in: []*types.VersionLifecycle{
-				{Version: "17", IsSupported: true, IsExtendedSupport: false},
-				{Version: "16", IsSupported: true, IsExtendedSupport: false},
-				{Version: "14", IsSupported: true, IsExtendedSupport: true},
-				{Version: "12", IsSupported: false},
-			},
-			want: "17",
-		},
-		{
-			name: "skips unsupported cycles even if newer",
-			in: []*types.VersionLifecycle{
-				{Version: "18-beta", IsSupported: false},
-				{Version: "17", IsSupported: true, IsExtendedSupport: false},
-			},
-			want: "17",
-		},
-		{
-			name: "falls back to extended-support when nothing is in standard support",
-			in: []*types.VersionLifecycle{
-				{Version: "14", IsSupported: true, IsExtendedSupport: true},
-				{Version: "12", IsSupported: false},
-			},
-			want: "14",
-		},
-		{
-			name: "returns empty when no cycle is supported",
-			in: []*types.VersionLifecycle{
-				{Version: "12", IsSupported: false},
-				{Version: "11", IsSupported: false},
-			},
-			want: "",
-		},
-		{
-			name: "returns empty for nil/empty slice",
-			in:   nil,
-			want: "",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := latestSupportedVersion(tt.in)
-			if got != tt.want {
-				t.Errorf("latestSupportedVersion = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestLatestNonExtendedSupportedVersion exercises the strict variant
-// used by the YELLOW IsExtendedSupport path. Empty result is a
-// meaningful signal — see provider.go's doc comment — so the
-// "all-extended" case is the most important table entry here.
-func TestLatestNonExtendedSupportedVersion(t *testing.T) {
-	//nolint:govet // field alignment sacrificed for table-test readability
-	tests := []struct {
-		name string
-		in   []*types.VersionLifecycle
-		want string
-	}{
-		{
-			name: "picks newest non-extended supported cycle",
-			in: []*types.VersionLifecycle{
-				{Version: "17", IsSupported: true, IsExtendedSupport: false},
-				{Version: "16", IsSupported: true, IsExtendedSupport: false},
-				{Version: "14", IsSupported: true, IsExtendedSupport: true},
-			},
-			want: "17",
-		},
-		{
-			name: "skips extended-support cycles even if newer",
-			in: []*types.VersionLifecycle{
-				{Version: "17", IsSupported: true, IsExtendedSupport: true},
-				{Version: "16", IsSupported: true, IsExtendedSupport: false},
-			},
-			want: "16",
-		},
-		{
-			name: "all supported cycles in extended support → empty (signals fallback)",
-			in: []*types.VersionLifecycle{
-				{Version: "13", IsSupported: true, IsExtendedSupport: true},
-				{Version: "12", IsSupported: true, IsExtendedSupport: true},
-				{Version: "11", IsSupported: false},
-			},
-			want: "",
-		},
-		{
-			name: "no supported cycles at all → empty",
-			in: []*types.VersionLifecycle{
-				{Version: "12", IsSupported: false},
-				{Version: "11", IsSupported: false},
-			},
-			want: "",
-		},
-		{
-			name: "nil/empty slice → empty",
-			in:   nil,
-			want: "",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := latestNonExtendedSupportedVersion(tt.in)
-			if got != tt.want {
-				t.Errorf("latestNonExtendedSupportedVersion = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestProvider_ListAllVersions_PreservesCycleOrder pins the invariant
-// that latestSupportedVersion depends on: cycles flow through
-// ListAllVersions in the same order the upstream client returned
-// them. If a future refactor sorts/dedupes/groups cycles inside
-// ListAllVersions, the recommendation heuristic silently breaks; this
-// test fails first.
+// TestProvider_ListAllVersions_PreservesCycleOrder documents that cycles flow
+// through ListAllVersions in the same order the upstream client returned them.
+// Future consumers may care about this ordering even though the provider does
+// not currently derive upgrade targets from it.
 func TestProvider_ListAllVersions_PreservesCycleOrder(t *testing.T) {
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(_ context.Context, _ string) ([]*ProductCycle, error) {
@@ -721,8 +598,7 @@ func TestProvider_ListAllVersions_PreservesCycleOrder(t *testing.T) {
 // TestProvider_GetVersionLifecycle_ConcurrentSafe verifies that
 // concurrent callers on the same product do not race on shared cached
 // *VersionLifecycle pointers. Run with `go test -race` to catch any
-// regression that re-introduces the cache-mutation race fixed by
-// stamping RecommendedVersion at cache-population time.
+// regression that re-introduces shared cache mutation.
 func TestProvider_GetVersionLifecycle_ConcurrentSafe(t *testing.T) {
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(_ context.Context, _ string) ([]*ProductCycle, error) {
@@ -758,73 +634,12 @@ func TestProvider_GetVersionLifecycle_ConcurrentSafe(t *testing.T) {
 					t.Errorf("GetVersionLifecycle(%q) error: %v", v, err)
 					return
 				}
-				if lifecycle.RecommendedVersion != "17" {
-					t.Errorf("RecommendedVersion = %q, want %q", lifecycle.RecommendedVersion, "17")
+				if lifecycle == nil {
+					t.Errorf("GetVersionLifecycle(%q) returned nil lifecycle", v)
 					return
 				}
 			}
 		}()
 	}
 	wg.Wait()
-}
-
-// TestProvider_GetVersionLifecycle_PopulatesRecommendedVersion verifies
-// that every code path through GetVersionLifecycle (exact match,
-// prefix match, unknown) stamps the product-wide RecommendedVersion
-// onto the returned lifecycle so the policy layer can read it
-// without re-querying the provider.
-func TestProvider_GetVersionLifecycle_PopulatesRecommendedVersion(t *testing.T) {
-	mockClient := &MockClient{
-		GetProductCyclesFunc: func(_ context.Context, _ string) ([]*ProductCycle, error) {
-			return []*ProductCycle{
-				// Newest first — the newest non-extended supported
-				// cycle (16.2) is what we expect to surface.
-				{Cycle: "16.2", ReleaseDate: "2024-05-09", Support: "2028-11-09", EOL: "2028-11-09"},
-				{Cycle: "14.10", ReleaseDate: "2022-11-10", Support: "2024-11-12", EOL: "2027-11-12", ExtendedSupport: "2027-11-12"},
-				{Cycle: "12.18", ReleaseDate: "2020-11-12", Support: "2024-11-14", EOL: "2024-11-14"},
-			}, nil
-		},
-	}
-	provider, _ := NewProvider(mockClient, "amazon-rds-postgresql", "", 1*time.Hour, nil)
-
-	tests := []struct {
-		name              string
-		version           string
-		wantRecommendedV  string
-		wantMatchedCycleV string // empty means we expect the unknown lifecycle
-	}{
-		{
-			name:              "exact match still receives RecommendedVersion",
-			version:           "16.2",
-			wantRecommendedV:  "16.2",
-			wantMatchedCycleV: "16.2",
-		},
-		{
-			name:              "prefix match still receives RecommendedVersion",
-			version:           "16.2.3",
-			wantRecommendedV:  "16.2",
-			wantMatchedCycleV: "16.2",
-		},
-		{
-			name:              "unknown version still receives RecommendedVersion",
-			version:           "99.0",
-			wantRecommendedV:  "16.2",
-			wantMatchedCycleV: "", // unknown lifecycle has empty Version
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			lifecycle, err := provider.GetVersionLifecycle(context.Background(), "postgres", tt.version)
-			if err != nil {
-				t.Fatalf("GetVersionLifecycle error: %v", err)
-			}
-			if lifecycle.RecommendedVersion != tt.wantRecommendedV {
-				t.Errorf("RecommendedVersion = %q, want %q", lifecycle.RecommendedVersion, tt.wantRecommendedV)
-			}
-			if lifecycle.Version != tt.wantMatchedCycleV {
-				t.Errorf("Version = %q, want %q", lifecycle.Version, tt.wantMatchedCycleV)
-			}
-		})
-	}
 }

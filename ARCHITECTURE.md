@@ -460,7 +460,7 @@ s3://your-bucket/snapshots/
 ```json
 {
   "snapshot_id": "scan-2026-04-09-123456",
-  "version": "v1",
+  "version": "v3",
   "generated_at": "2026-04-09T12:34:56Z",
   "scan_start_time": "2026-04-09T12:00:00Z",
   "scan_end_time": "2026-04-09T12:34:56Z",
@@ -554,7 +554,7 @@ func (e *JiraEmitter) Emit(ctx context.Context, snapshotID string, findings []*t
                 Fields: &jira.IssueFields{
                     Project:     jira.Project{Key: "INFRA"},
                     Summary:     finding.Message,
-                    Description: finding.Recommendation,
+                    Description: finding.Message,
                     Priority:    e.mapPriority(finding.Status),
                 },
             }

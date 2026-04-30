@@ -158,7 +158,6 @@ func (c *FindingShowCmd) Run(_ *Context) error {
 	fmt.Println("Engine:           aurora-mysql")
 	fmt.Println("EOL Date:         2024-11-01")
 	fmt.Println("Message:          Version is past End-of-Life (EOL since Nov 2024)")
-	fmt.Println("Recommendation:   Upgrade to aurora-mysql 8.0.35 immediately")
 
 	return nil
 }

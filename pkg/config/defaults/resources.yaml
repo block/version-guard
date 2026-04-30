@@ -313,19 +313,11 @@ resources:
     eol:
       provider: endoflife-date
       product: aws-lambda
-      schema: declarative
-      lifecycle:
-        # Lambda uses "Standard Support" and "Deprecated Support" instead
-        # of extendedSupport. Treat the deprecated-support window as the
-        # same YELLOW warning state Version Guard uses for extended support.
-        deprecation_date:
-          field: support
-        extended_support_end:
-          field: eol
-        eol_date:
-          field: eol
-        deprecated_window: extended_support
-        past_extended_support: eol
+      # Lambda uses the standard API shape: `support` marks the start of
+      # deprecated runtime support and `eol` is the terminal date. There is
+      # no `extendedSupport` field, so the standard adapter classifies that
+      # window as deprecated support, not paid extended support.
+      schema: standard
 
   # To add a new resource type, follow skills/add-version-guard-resource.
   # Standalone copy-paste templates live in skills/add-version-guard-resource/examples/.
