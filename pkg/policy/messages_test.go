@@ -65,6 +65,39 @@ func TestGetMessage_Yellow_ExtendedSupport(t *testing.T) {
 	assert.Contains(t, got, "extended support")
 }
 
+func TestGetMessage_Yellow_DeprecatedSupport_WithEOL(t *testing.T) {
+	// Lambda-style: IsDeprecatedSupport with a deprecated-support
+	// end date. Exercises the IsDeprecatedSupport+EOLDate branch and
+	// versionSubject's "Runtime" label for Lambda resources.
+	p := NewDefaultPolicy()
+	res := &types.Resource{
+		Engine:         "aws-lambda",
+		CurrentVersion: "nodejs16.x",
+		Type:           types.ResourceType("lambda"),
+	}
+	end := time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC)
+	lc := &types.VersionLifecycle{IsDeprecatedSupport: true, EOLDate: &end}
+
+	got := p.GetMessage(res, lc, types.StatusYellow)
+	assert.Contains(t, got, "Runtime nodejs16.x")
+	assert.Contains(t, got, "deprecated support")
+	assert.Contains(t, got, "Jun 12, 2026")
+}
+
+func TestGetMessage_Yellow_DeprecatedSupport_NoEOL(t *testing.T) {
+	// IsDeprecatedSupport with no EOL date — exercises the
+	// "deprecated support" branch that omits the until-date phrase.
+	// Non-lambda resource so versionSubject returns "Version".
+	p := NewDefaultPolicy()
+	res := &types.Resource{Engine: "postgres", CurrentVersion: "11"}
+	lc := &types.VersionLifecycle{IsDeprecatedSupport: true}
+
+	got := p.GetMessage(res, lc, types.StatusYellow)
+	assert.Contains(t, got, "Version 11")
+	assert.Contains(t, got, "deprecated support")
+	assert.NotContains(t, got, "until")
+}
+
 func TestGetMessage_Yellow_ApproachingEOL(t *testing.T) {
 	p := NewDefaultPolicy()
 	res := &types.Resource{Engine: "redis", CurrentVersion: "6.0"}
