@@ -48,7 +48,9 @@ type InventoryConfig struct {
 	NativeTypePattern string            `yaml:"native_type_pattern"`
 }
 
-// EOLConfig defines EOL provider configuration
+// EOLConfig defines EOL provider configuration.
+//
+//nolint:govet // YAML field order chosen for readability of resources.yaml
 type EOLConfig struct {
 	Provider  string                                `yaml:"provider"`
 	Product   string                                `yaml:"product"`

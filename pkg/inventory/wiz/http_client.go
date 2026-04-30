@@ -33,12 +33,17 @@ const reportDownloadQuery = `query ReportDownloadUrl($reportId: ID!) {
 }`
 
 // HTTPClient implements WizClient using net/http
-//
-//nolint:govet // field alignment sacrificed for readability
 type HTTPClient struct {
 	clientID     string
 	clientSecret string
 	httpClient   *http.Client
+
+	// authURL and graphqlURL default to the Wiz production endpoints
+	// in NewHTTPClient. They are package-private so tests can stand
+	// up an httptest.Server and point the client at it without an
+	// extra public constructor.
+	authURL    string
+	graphqlURL string
 }
 
 // NewHTTPClient creates a new HTTPClient for the Wiz API
@@ -47,6 +52,8 @@ func NewHTTPClient(clientID, clientSecret string) *HTTPClient {
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		authURL:      wizAuthURL,
+		graphqlURL:   wizGraphQLURL,
 	}
 }
 
@@ -86,7 +93,7 @@ func (c *HTTPClient) GetAccessToken(ctx context.Context) (string, error) {
 	params.Set("client_id", c.clientID)
 	params.Set("client_secret", c.clientSecret)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wizAuthURL, strings.NewReader(params.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.authURL, strings.NewReader(params.Encode()))
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create auth request")
 	}
@@ -170,7 +177,7 @@ func (c *HTTPClient) DownloadReport(ctx context.Context, downloadURL string) (io
 func (c *HTTPClient) doGraphQL(ctx context.Context, accessToken string, reqBody []byte, result any) error {
 	var lastErr error
 	for i := 0; i < maxRetries; i++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, wizGraphQLURL, bytes.NewReader(reqBody))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(reqBody))
 		if err != nil {
 			return errors.Wrap(err, "failed to create GraphQL request")
 		}
