@@ -12,6 +12,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 
 	"github.com/block/Version-Guard/pkg/types"
+	"github.com/block/Version-Guard/pkg/workflow/orchestrator"
 )
 
 // testResourceTypes is the canonical fixture list for ResourceTypes —
@@ -133,7 +134,13 @@ func TestEnsureSchedule_CreatesNew(t *testing.T) {
 	assert.Equal(t, 2*time.Hour, action.WorkflowExecutionTimeout)
 }
 
-func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
+// TestEnsureSchedule_AlreadyExists_AlwaysUpdates guards the contract
+// that an existing schedule is unconditionally refreshed on every
+// startup. The previous "skip when cron+jitter match" optimization
+// failed to refresh Action.Args, leaving stale ResourceTypes baked
+// into pre-existing schedules — see the doc comment on the update
+// path in schedule.go for the full incident background.
+func TestEnsureSchedule_AlreadyExists_AlwaysUpdates(t *testing.T) {
 	handle := &mockScheduleHandle{
 		id: "test-schedule",
 		describeOut: &client.ScheduleDescription{
@@ -161,7 +168,8 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.False(t, handle.updateCalled, "Update should not be called when cron matches")
+	assert.True(t, handle.updateCalled,
+		"Update must always run on existing schedules so Action.Args is refreshed")
 }
 
 func TestEnsureSchedule_AlreadyExists_DifferentCron(t *testing.T) {
@@ -308,10 +316,44 @@ func TestEnsureSchedule_Update_ReplacesStaleCalendars(t *testing.T) {
 	assert.Equal(t, 1*time.Minute, captured.Schedule.Spec.Jitter)
 }
 
-func TestEnsureSchedule_DescribeError(t *testing.T) {
+// TestEnsureSchedule_Update_RefreshesActionArgs is the regression
+// guard for the silent-arg-drift bug. Before the fix, the update path
+// only rewrote Spec and left Action.Args untouched, so a schedule
+// created on an older code revision (with empty/stale ResourceTypes)
+// kept the stale args forever — every cron firing then failed
+// instantly with ErrNoResourceTypes. This test verifies that
+// EnsureSchedule overwrites Action.Args (and TaskQueue) with the
+// current cfg values whenever it touches an existing schedule.
+func TestEnsureSchedule_Update_RefreshesActionArgs(t *testing.T) {
+	staleResourceTypes := []types.ResourceType{"old-resource-from-prior-revision"}
 	handle := &mockScheduleHandle{
-		id:          "test-schedule",
-		describeErr: errors.New("not found"),
+		id: "test-schedule",
+		describeOut: &client.ScheduleDescription{
+			Schedule: client.Schedule{
+				Spec: &client.ScheduleSpec{
+					CronExpressions: []string{"0 6 * * *"},
+				},
+				Action: &client.ScheduleWorkflowAction{
+					TaskQueue: "old-task-queue",
+					Args: []interface{}{
+						// Simulate a stale args payload from an earlier
+						// schedule revision that had different
+						// ResourceTypes than the current YAML config.
+						map[string]interface{}{
+							"ScanID":        "",
+							"ResourceTypes": staleResourceTypes,
+						},
+					},
+				},
+			},
+		},
+	}
+	var captured *client.ScheduleUpdate
+	handle.updateFn = func(opts client.ScheduleUpdateOptions) {
+		input := client.ScheduleUpdateInput{Description: *handle.describeOut}
+		result, err := opts.DoUpdate(input)
+		require.NoError(t, err)
+		captured = result
 	}
 	mock := &mockCreator{
 		createErr: temporal.ErrScheduleAlreadyRunning,
@@ -322,11 +364,20 @@ func TestEnsureSchedule_DescribeError(t *testing.T) {
 	err := mgr.EnsureSchedule(context.Background(), Config{
 		Enabled:        true,
 		ScheduleID:     "test-schedule",
-		CronExpression: "0 */6 * * *",
-		TaskQueue:      "test-queue",
+		CronExpression: "0 6 * * *",
+		TaskQueue:      "new-task-queue",
 		ResourceTypes:  testResourceTypes,
 	})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	action, ok := captured.Schedule.Action.(*client.ScheduleWorkflowAction)
+	require.True(t, ok, "Action must remain a ScheduleWorkflowAction")
+	assert.Equal(t, "new-task-queue", action.TaskQueue,
+		"TaskQueue must be refreshed from current cfg")
+	require.Len(t, action.Args, 1, "Args must be exactly the orchestrator WorkflowInput")
+	input, ok := action.Args[0].(orchestrator.WorkflowInput)
+	require.True(t, ok, "Args[0] must be a typed orchestrator.WorkflowInput, not the stale payload")
+	assert.Equal(t, testResourceTypes, input.ResourceTypes,
+		"ResourceTypes must be refreshed from current cfg, not preserved from the stale schedule")
 }
