@@ -172,6 +172,23 @@ The `endoflife` service serves patched EOL data for products with pending upstre
 
 Once running, open the Temporal Web UI at http://localhost:8233 to trigger and monitor workflows.
 
+### Metrics
+
+Metrics are disabled by default. To emit scan aggregates to a DogStatsD-compatible
+agent such as Datadog Agent, set:
+
+```bash
+METRICS_BACKEND=dogstatsd
+DOGSTATSD_ADDR=127.0.0.1:8125 # optional
+METRICS_TAGS=service:version-guard,team:platform
+```
+
+Version Guard emits `version_guard.findings.*`,
+`version_guard.compliance_percentage`, `version_guard.detection.duration_ms`,
+`version_guard.inventory.*`, and `version_guard.scan.completed`. Standard
+Datadog tags are also read from `DD_SERVICE`, `DD_ENV`, and `DD_VERSION` when
+present.
+
 ### Run Locally (manual)
 
 If you prefer running components individually:

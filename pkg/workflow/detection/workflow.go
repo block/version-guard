@@ -149,6 +149,7 @@ func DetectionWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutp
 		FindingsBatchID: detectResult.FindingsBatchID,
 		Findings:        detectResult.Findings,
 		ResourceType:    input.ResourceType,
+		DurationMillis:  workflow.Now(ctx).Sub(startTime).Milliseconds(),
 	}).Get(shortCtx, &metricsResult)
 	if err != nil {
 		logger.Error("Failed to emit metrics", "error", err)

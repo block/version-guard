@@ -1,12 +1,15 @@
 package detection
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/block/Version-Guard/pkg/emitters"
 	"github.com/block/Version-Guard/pkg/eol"
 	eolmock "github.com/block/Version-Guard/pkg/eol/mock"
 	"github.com/block/Version-Guard/pkg/inventory"
@@ -39,6 +42,26 @@ func newTestActivities(resources []*types.Resource, eolVersions map[string]*type
 func newActivityEnv() *testsuite.TestActivityEnvironment {
 	testSuite := &testsuite.WorkflowTestSuite{}
 	return testSuite.NewTestActivityEnvironment()
+}
+
+type recordingMetricsEmitter struct {
+	err                  error
+	metrics              emitters.ScanMetrics
+	inventoryFetchMetric emitters.InventoryFetchMetrics
+	calls                int
+	inventoryFetchCalls  int
+}
+
+func (r *recordingMetricsEmitter) EmitScanMetrics(_ context.Context, metrics emitters.ScanMetrics) error {
+	r.calls++
+	r.metrics = metrics
+	return r.err
+}
+
+func (r *recordingMetricsEmitter) EmitInventoryFetchMetrics(_ context.Context, metrics emitters.InventoryFetchMetrics) error {
+	r.inventoryFetchCalls++
+	r.inventoryFetchMetric = metrics
+	return r.err
 }
 
 func testResources() []*types.Resource {
@@ -119,8 +142,27 @@ func TestFetchInventory_WithoutScanID_ReturnsInline(t *testing.T) {
 	assert.Len(t, inv.Resources, 2)
 }
 
+func TestFetchInventory_EmitsSuccessMetrics(t *testing.T) {
+	resources := testResources()
+	emitter := &recordingMetricsEmitter{}
+	act := newTestActivities(resources, nil).WithMetricsEmitter(emitter)
+	env := newActivityEnv()
+	env.RegisterActivity(act.FetchInventory)
+
+	_, err := env.ExecuteActivity(act.FetchInventory, FetchInventoryInput{
+		ResourceType: types.ResourceTypeAurora,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, emitter.inventoryFetchCalls)
+	assert.Equal(t, types.ResourceTypeAurora, emitter.inventoryFetchMetric.ResourceType)
+	assert.Equal(t, 2, emitter.inventoryFetchMetric.ResourceCount)
+	assert.True(t, emitter.inventoryFetchMetric.Success)
+}
+
 func TestFetchInventory_SourceError(t *testing.T) {
 	errSource := &invmock.InventorySource{ListErr: assert.AnError}
+	emitter := &recordingMetricsEmitter{}
 	act := NewActivities(
 		map[types.ResourceType]inventory.InventorySource{
 			types.ResourceTypeAurora: errSource,
@@ -130,7 +172,7 @@ func TestFetchInventory_SourceError(t *testing.T) {
 		},
 		policy.NewDefaultPolicy(),
 		memory.NewStore(),
-	)
+	).WithMetricsEmitter(emitter)
 	env := newActivityEnv()
 	env.RegisterActivity(act.FetchInventory)
 
@@ -139,6 +181,9 @@ func TestFetchInventory_SourceError(t *testing.T) {
 		ResourceType: types.ResourceTypeAurora,
 	})
 	require.Error(t, err)
+	require.Equal(t, 1, emitter.inventoryFetchCalls)
+	assert.Equal(t, types.ResourceTypeAurora, emitter.inventoryFetchMetric.ResourceType)
+	assert.False(t, emitter.inventoryFetchMetric.Success)
 }
 
 // --- FetchEOLData tests ---
@@ -465,6 +510,54 @@ func TestEmitMetrics_EmptyFindings(t *testing.T) {
 	require.NoError(t, result.Get(&metrics))
 	assert.Equal(t, 0, metrics.Summary.TotalResources)
 	assert.Equal(t, 0.0, metrics.Summary.CompliancePercentage)
+}
+
+func TestEmitMetrics_UsesConfiguredMetricsEmitter(t *testing.T) {
+	emitter := &recordingMetricsEmitter{}
+	act := newTestActivities(nil, nil).WithMetricsEmitter(emitter)
+	env := newActivityEnv()
+	env.RegisterActivity(act.EmitMetrics)
+
+	result, err := env.ExecuteActivity(act.EmitMetrics, MetricsInput{
+		Findings: []*types.Finding{
+			{ResourceID: "r1", Status: types.StatusRed, CloudProvider: types.CloudProviderAWS},
+			{ResourceID: "r2", Status: types.StatusGreen, CloudProvider: types.CloudProviderAWS},
+		},
+		ResourceType:   types.ResourceTypeAurora,
+		DurationMillis: 1234,
+	})
+	require.NoError(t, err)
+
+	var metrics MetricsResult
+	require.NoError(t, result.Get(&metrics))
+	require.Equal(t, 1, emitter.calls)
+	require.NotNil(t, emitter.metrics.Summary)
+	assert.Equal(t, types.ResourceTypeAurora, emitter.metrics.Summary.ResourceType)
+	assert.Equal(t, types.CloudProviderAWS, emitter.metrics.Summary.CloudProvider)
+	assert.Equal(t, 2, emitter.metrics.Summary.TotalResources)
+	assert.Equal(t, 50.0, emitter.metrics.Summary.CompliancePercentage)
+	assert.Equal(t, int64(1234), emitter.metrics.DurationMillis)
+}
+
+func TestEmitMetrics_EmitterErrorCleansCache(t *testing.T) {
+	emitErr := errors.New("emit failed")
+	act := newTestActivities(nil, nil).WithMetricsEmitter(&recordingMetricsEmitter{err: emitErr})
+	act.resourceCache.Store("scan-123-findings", []*types.Finding{
+		{ResourceID: "r1", Status: types.StatusRed},
+	})
+
+	env := newActivityEnv()
+	env.RegisterActivity(act.EmitMetrics)
+
+	_, err := env.ExecuteActivity(act.EmitMetrics, MetricsInput{
+		FindingsBatchID: "scan-123-findings",
+		ResourceType:    types.ResourceTypeAurora,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), emitErr.Error())
+
+	_, ok := act.resourceCache.Load("scan-123-findings")
+	assert.False(t, ok, "findings cache should be deleted even when metrics emission fails")
 }
 
 // --- Full pipeline cache lifecycle test ---

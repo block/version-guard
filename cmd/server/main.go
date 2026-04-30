@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	vgconfig "github.com/block/Version-Guard/pkg/config"
+	"github.com/block/Version-Guard/pkg/emitters"
 	"github.com/block/Version-Guard/pkg/eol"
 	eolendoflife "github.com/block/Version-Guard/pkg/eol/endoflife"
 	"github.com/block/Version-Guard/pkg/inventory"
@@ -70,6 +72,11 @@ type ServerCLI struct {
 	// Service configuration
 	HTTPPort int `help:"HTTP admin port (POST /scan)" default:"8081" env:"HTTP_PORT"`
 
+	// Metrics configuration
+	MetricsBackend string `help:"Metrics backend: none or dogstatsd" default:"none" env:"METRICS_BACKEND"`
+	DogStatsDAddr  string `help:"DogStatsD UDP address (defaults to DD_AGENT_HOST:DD_DOGSTATSD_PORT or 127.0.0.1:8125)" env:"DOGSTATSD_ADDR"`
+	MetricsTags    string `help:"Comma-separated metric tags, e.g. service:version-guard,team:platform" env:"METRICS_TAGS"`
+
 	// Tag configuration (comma-separated lists for AWS resource tags)
 	TagAppKeys string `help:"Comma-separated tag keys for application/service name" default:"app,application,service" env:"TAG_APP_KEYS"`
 
@@ -93,6 +100,10 @@ type ServerCLI struct {
 
 // parseTagKeys parses a comma-separated string into a slice of tag keys
 func parseTagKeys(input string) []string {
+	return parseCSV(input)
+}
+
+func parseCSV(input string) []string {
 	if input == "" {
 		return []string{}
 	}
@@ -107,10 +118,78 @@ func parseTagKeys(input string) []string {
 	return result
 }
 
+func parseMetricTags(input string) []string {
+	tags := parseCSV(input)
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if strings.Contains(tag, ":") {
+			result = append(result, tag)
+		}
+	}
+	return result
+}
+
+func metricTagKeyExists(tags []string, key string) bool {
+	prefix := key + ":"
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendMetricTagIfMissing(tags []string, key, value string) []string {
+	if value == "" || metricTagKeyExists(tags, key) {
+		return tags
+	}
+	return append(tags, key+":"+value)
+}
+
+func buildMetricTags(input string) []string {
+	tags := parseMetricTags(input)
+	tags = appendMetricTagIfMissing(tags, "service", os.Getenv("DD_SERVICE"))
+	tags = appendMetricTagIfMissing(tags, "service", "version-guard")
+	tags = appendMetricTagIfMissing(tags, "env", os.Getenv("DD_ENV"))
+	tags = appendMetricTagIfMissing(tags, "version", os.Getenv("DD_VERSION"))
+	return tags
+}
+
+func dogStatsDAddr(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	host := os.Getenv("DD_AGENT_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := os.Getenv("DD_DOGSTATSD_PORT")
+	if port == "" {
+		port = "8125"
+	}
+	return net.JoinHostPort(host, port)
+}
+
 // buildTagConfig creates a TagConfig from the environment variables
 func (s *ServerCLI) buildTagConfig() *wiz.TagConfig {
 	return &wiz.TagConfig{
 		AppTags: parseTagKeys(s.TagAppKeys),
+	}
+}
+
+func (s *ServerCLI) buildMetricsEmitter() (emitters.MetricsEmitter, func() error, error) {
+	switch strings.ToLower(strings.TrimSpace(s.MetricsBackend)) {
+	case "", "none", "noop":
+		return emitters.NoopMetricsEmitter{}, nil, nil
+	case "dogstatsd", "datadog":
+		addr := dogStatsDAddr(s.DogStatsDAddr)
+		metricsEmitter, err := emitters.NewDogStatsDMetricsEmitter(addr, buildMetricTags(s.MetricsTags))
+		if err != nil {
+			return nil, nil, err
+		}
+		return metricsEmitter, metricsEmitter.Close, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported metrics backend %q", s.MetricsBackend)
 	}
 }
 
@@ -138,6 +217,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  Wiz Cache TTL: %d hours\n", s.WizCacheTTLHours)
 		fmt.Printf("  AWS Region: %s\n", s.AWSRegion)
 		fmt.Printf("  S3 Prefix: %s\n", s.S3Prefix)
+		fmt.Printf("  Metrics Backend: %s\n", s.MetricsBackend)
 		fmt.Printf("  Tag Keys - App: %s\n", s.TagAppKeys)
 		if s.ScheduleEnabled {
 			fmt.Printf("  Schedule: enabled (cron: %s, id: %s, jitter: %s)\n",
@@ -155,6 +235,21 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	// Initialize store
 	st := memory.NewStore()
 	fmt.Println("✓ In-memory store initialized")
+
+	metricsEmitter, closeMetricsEmitter, err := s.buildMetricsEmitter()
+	if err != nil {
+		return fmt.Errorf("failed to configure metrics: %w", err)
+	}
+	if closeMetricsEmitter != nil {
+		defer func() {
+			if closeErr := closeMetricsEmitter(); closeErr != nil {
+				fmt.Printf("metrics emitter shutdown error: %v\n", closeErr)
+			}
+		}()
+		fmt.Printf("✓ Metrics configured (backend: %s, address: %s)\n", s.MetricsBackend, dogStatsDAddr(s.DogStatsDAddr))
+	} else {
+		fmt.Println("✓ Metrics disabled")
+	}
 
 	// Initialize S3 snapshot store
 	var snapshotStore *snapshot.S3Store
@@ -357,7 +452,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		eolProviders,
 		policyEngine,
 		st,
-	)
+	).WithMetricsEmitter(metricsEmitter)
 	w.RegisterActivityWithOptions(detectionActivities.FetchInventory, activity.RegisterOptions{Name: detection.FetchInventoryActivityName})
 	w.RegisterActivityWithOptions(detectionActivities.FetchEOLData, activity.RegisterOptions{Name: detection.FetchEOLDataActivityName})
 	w.RegisterActivityWithOptions(detectionActivities.DetectDrift, activity.RegisterOptions{Name: detection.DetectDriftActivityName})

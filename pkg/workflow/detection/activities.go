@@ -7,6 +7,7 @@ import (
 
 	"go.temporal.io/sdk/activity"
 
+	"github.com/block/Version-Guard/pkg/emitters"
 	"github.com/block/Version-Guard/pkg/eol"
 	"github.com/block/Version-Guard/pkg/inventory"
 	"github.com/block/Version-Guard/pkg/policy"
@@ -69,6 +70,7 @@ type MetricsInput struct {
 	FindingsBatchID string
 	Findings        []*types.Finding
 	ResourceType    types.ResourceType
+	DurationMillis  int64
 }
 
 type MetricsResult struct {
@@ -88,6 +90,7 @@ type Activities struct {
 	EOLProviders     map[types.ResourceType]eol.Provider
 	Policy           policy.VersionPolicy
 	Store            store.Store
+	MetricsEmitter   emitters.MetricsEmitter
 	resourceCache    sync.Map
 }
 
@@ -106,7 +109,17 @@ func NewActivities(
 		EOLProviders:     eolProviders,
 		Policy:           policy,
 		Store:            store,
+		MetricsEmitter:   emitters.NoopMetricsEmitter{},
 	}
+}
+
+// WithMetricsEmitter configures the emitter used by EmitMetrics.
+func (a *Activities) WithMetricsEmitter(metricsEmitter emitters.MetricsEmitter) *Activities {
+	if metricsEmitter == nil {
+		metricsEmitter = emitters.NoopMetricsEmitter{}
+	}
+	a.MetricsEmitter = metricsEmitter
+	return a
 }
 
 func (a *Activities) loadResources(batchID string, fallback []*types.Resource) ([]*types.Resource, error) {
@@ -146,15 +159,40 @@ func (a *Activities) FetchInventory(ctx context.Context, input FetchInventoryInp
 
 	source, ok := a.InventorySources[input.ResourceType]
 	if !ok {
+		if a.MetricsEmitter != nil {
+			if emitErr := a.MetricsEmitter.EmitInventoryFetchMetrics(ctx, emitters.InventoryFetchMetrics{
+				ResourceType: input.ResourceType,
+				Success:      false,
+			}); emitErr != nil {
+				logger.Warn("Failed to emit inventory fetch metrics", "error", emitErr)
+			}
+		}
 		return nil, fmt.Errorf("no inventory source registered for resource type: %s", input.ResourceType)
 	}
 
 	resources, err := source.ListResources(ctx, input.ResourceType)
 	if err != nil {
+		if a.MetricsEmitter != nil {
+			if emitErr := a.MetricsEmitter.EmitInventoryFetchMetrics(ctx, emitters.InventoryFetchMetrics{
+				ResourceType: input.ResourceType,
+				Success:      false,
+			}); emitErr != nil {
+				logger.Warn("Failed to emit inventory fetch metrics", "error", emitErr)
+			}
+		}
 		return nil, err
 	}
 
 	logger.Info("Inventory fetched", "count", len(resources))
+	if a.MetricsEmitter != nil {
+		if emitErr := a.MetricsEmitter.EmitInventoryFetchMetrics(ctx, emitters.InventoryFetchMetrics{
+			ResourceType:  input.ResourceType,
+			ResourceCount: len(resources),
+			Success:       true,
+		}); emitErr != nil {
+			logger.Warn("Failed to emit inventory fetch metrics", "error", emitErr)
+		}
+	}
 
 	if input.ScanID == "" {
 		return &InventoryResult{Resources: resources}, nil
@@ -308,6 +346,9 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 	if err != nil {
 		return nil, err
 	}
+	if input.FindingsBatchID != "" {
+		defer a.resourceCache.Delete(input.FindingsBatchID)
+	}
 
 	logger := activity.GetLogger(ctx)
 	logger.Info("Emitting metrics", "findingsCount", len(findings))
@@ -315,9 +356,13 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 	// Calculate summary
 	summary := &types.ScanSummary{
 		TotalResources: len(findings),
+		ResourceType:   input.ResourceType,
 	}
 
 	for _, f := range findings {
+		if summary.CloudProvider == "" && f.CloudProvider != "" {
+			summary.CloudProvider = f.CloudProvider
+		}
 		switch f.Status {
 		case types.StatusRed:
 			summary.RedCount++
@@ -341,10 +386,14 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 		"green", summary.GreenCount,
 		"compliance", summary.CompliancePercentage)
 
-	// TODO: Emit to Datadog/metrics system
-
-	if input.FindingsBatchID != "" {
-		a.resourceCache.Delete(input.FindingsBatchID)
+	if a.MetricsEmitter != nil {
+		err = a.MetricsEmitter.EmitScanMetrics(ctx, emitters.ScanMetrics{
+			Summary:        summary,
+			DurationMillis: input.DurationMillis,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &MetricsResult{

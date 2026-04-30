@@ -348,13 +348,29 @@ temporal workflow observe --workflow-id <workflow-id> --namespace version-guard-
 
 #### Metrics to Track
 
-Version Guard emits the following metrics (if Datadog enabled):
+Version Guard emits the following metrics when `METRICS_BACKEND=dogstatsd`:
 - `version_guard.findings.red` - Critical issues count
 - `version_guard.findings.yellow` - Warning issues count
+- `version_guard.findings.green` - Compliant resources count
+- `version_guard.findings.unknown` - Resources with unknown lifecycle data
 - `version_guard.findings.total` - Total resources scanned
 - `version_guard.compliance_percentage` - Fleet compliance %
 - `version_guard.detection.duration_ms` - Scan duration
-- `version_guard.inventory.fetch` - Inventory fetch success rate
+- `version_guard.inventory.fetch` - Inventory fetch success (1) or failure (0)
+- `version_guard.inventory.resources` - Resources returned by a successful inventory fetch
+- `version_guard.scan.completed` - Completed scans count
+
+DogStatsD emission is disabled by default for local and OSS users. Enable it
+with:
+
+```bash
+METRICS_BACKEND=dogstatsd
+DOGSTATSD_ADDR=127.0.0.1:8125 # optional; defaults to DD_AGENT_HOST/DD_DOGSTATSD_PORT or 127.0.0.1:8125
+METRICS_TAGS=service:version-guard,team:platform
+```
+
+If `DD_SERVICE`, `DD_ENV`, or `DD_VERSION` are set, Version Guard adds those as
+metric tags unless the same tag key is already present in `METRICS_TAGS`.
 
 #### Logs
 
