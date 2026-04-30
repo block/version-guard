@@ -19,6 +19,8 @@ is a compatibility alias for singular agent-file readers; current Amp reads
 
 ## Development Workflow
 
+- Read `CONTRIBUTING.md` before making changes that affect contribution flow,
+  release flow, CI expectations, or repository conventions.
 - Use the existing Makefile targets instead of one-off command variants:
   `make build-all`, `make test`, `make test-ci`, `make lint`, `make fmt-all`,
   and `make check`.
