@@ -41,7 +41,7 @@ setup: ## Initial setup (install tools, setup hooks)
 build: ## Build the server binary
 	@echo "🔨 Building $(BINARY_NAME) server..."
 	@mkdir -p bin
-	@go build -o bin/$(BINARY_NAME) cmd/server/main.go
+	@go build -o bin/$(BINARY_NAME) ./cmd/server
 	@echo "✅ Build complete: bin/$(BINARY_NAME)"
 
 .PHONY: build-cli

@@ -15,6 +15,11 @@ podAnnotations: {}
 
 adminPort: 8081
 
+temporalMetrics:
+  enabled: true
+  port: 9090
+  listenAddress: "0.0.0.0:9090"
+
 service:
   type: ClusterIP
   adminPort: 8081
