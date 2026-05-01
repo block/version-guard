@@ -12,11 +12,5 @@ spec:
       targetPort: http-admin
       protocol: TCP
       name: http-admin
-    {{- if .Values.temporalMetrics.enabled }}
-    - port: {{ .Values.temporalMetrics.port }}
-      targetPort: http-metrics
-      protocol: TCP
-      name: http-metrics
-    {{- end }}
   selector:
     {{- include "version-guard.selectorLabels" . | nindent 4 }}

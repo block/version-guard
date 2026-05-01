@@ -25,6 +25,7 @@ import (
 	"github.com/block/Version-Guard/pkg/eol"
 	eolendoflife "github.com/block/Version-Guard/pkg/eol/endoflife"
 	"github.com/block/Version-Guard/pkg/inventory"
+	mockinv "github.com/block/Version-Guard/pkg/inventory/mock"
 	"github.com/block/Version-Guard/pkg/inventory/wiz"
 	"github.com/block/Version-Guard/pkg/policy"
 	"github.com/block/Version-Guard/pkg/registry"
@@ -44,11 +45,9 @@ var version = "dev"
 //nolint:govet // field alignment sacrificed for logical grouping
 type ServerCLI struct {
 	// Temporal configuration
-	TemporalEndpoint             string `help:"Temporal server endpoint" default:"localhost:7233" env:"TEMPORAL_ENDPOINT"`
-	TemporalNamespace            string `help:"Temporal namespace" default:"version-guard-dev" env:"TEMPORAL_NAMESPACE"`
-	TemporalTaskQueue            string `help:"Temporal task queue" default:"version-guard-detection" env:"TEMPORAL_TASK_QUEUE"`
-	TemporalMetricsEnabled       bool   `help:"Enable Temporal SDK metrics" default:"true" env:"TEMPORAL_METRICS_ENABLED"`
-	TemporalMetricsListenAddress string `help:"Prometheus listen address for Temporal SDK metrics" default:"0.0.0.0:9090" env:"TEMPORAL_METRICS_LISTEN_ADDRESS"`
+	TemporalEndpoint  string `help:"Temporal server endpoint" default:"localhost:7233" env:"TEMPORAL_ENDPOINT"`
+	TemporalNamespace string `help:"Temporal namespace" default:"version-guard-dev" env:"TEMPORAL_NAMESPACE"`
+	TemporalTaskQueue string `help:"Temporal task queue" default:"version-guard-detection" env:"TEMPORAL_TASK_QUEUE"`
 
 	// Wiz configuration (optional - falls back to mock if not provided)
 	WizClientIDSecret      string `help:"Wiz client ID" env:"WIZ_CLIENT_ID_SECRET"`
@@ -64,6 +63,12 @@ type ServerCLI struct {
 	// AWS configuration (for EOL APIs)
 	AWSRegion string `help:"AWS region for EOL APIs" default:"us-west-2" env:"AWS_REGION"`
 
+	// Snapshot storage backend ("s3" or "memory"). "memory" is intended
+	// for laptop dev and CI smoke tests; it has no durability across
+	// restarts but lets the orchestrator's Stage 2 succeed without AWS
+	// credentials.
+	SnapshotStore string `help:"Snapshot store backend: s3 or memory" default:"s3" enum:"s3,memory" env:"SNAPSHOT_STORE"`
+
 	// S3 configuration (for snapshots)
 	S3Bucket   string `help:"S3 bucket for snapshots" default:"version-guard-snapshots" env:"S3_BUCKET"`
 	S3Prefix   string `help:"S3 prefix for snapshots" default:"snapshots/" env:"S3_PREFIX"`
@@ -71,6 +76,25 @@ type ServerCLI struct {
 
 	// Service configuration
 	HTTPPort int `help:"HTTP admin port (POST /scan)" default:"8081" env:"HTTP_PORT"`
+
+	// Emitter webhook (Stage 3). When set, OrchestratorWorkflow POSTs to
+	// "<url>/trigger-act" after the snapshot is persisted, kicking the
+	// downstream emitter immediately instead of waiting for its own cron.
+	// Empty disables the webhook (snapshot still lands in S3 for any
+	// pull-based consumer).
+	EmitterWebhookURL string `help:"Base URL of the emitter webhook (e.g. http://version-guard-emitter:8080)" env:"EMITTER_WEBHOOK_URL"`
+
+	// InventoryFallback selects what to do when a resource is configured
+	// to use Wiz inventory but no Wiz credentials are present. Default
+	// (empty) preserves the loud, fail-fast behavior: the resource is
+	// skipped and startup ultimately errors with "no resources
+	// configured". Set to "mock" to substitute a single synthetic
+	// resource per config — only intended for laptop dev / CI smoke
+	// tests of the detector → snapshot → emitter wire. Never set in
+	// production: a missing Wiz secret would otherwise silently emit
+	// fabricated 1.0.0 findings into S3 and poison every downstream
+	// consumer.
+	InventoryFallback string `help:"Fallback inventory source when Wiz creds missing: empty (fail), or 'mock' (dev only)" default:"" enum:",mock" env:"INVENTORY_FALLBACK"`
 
 	// Tag configuration (comma-separated lists for AWS resource tags)
 	TagAppKeys string `help:"Comma-separated tag keys for application/service name" default:"app,application,service" env:"TAG_APP_KEYS"`
@@ -140,8 +164,6 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("  Wiz Cache TTL: %d hours\n", s.WizCacheTTLHours)
 		fmt.Printf("  AWS Region: %s\n", s.AWSRegion)
 		fmt.Printf("  S3 Prefix: %s\n", s.S3Prefix)
-		fmt.Printf("  Temporal Metrics: enabled=%t listen=%s\n",
-			s.TemporalMetricsEnabled, s.TemporalMetricsListenAddress)
 		fmt.Printf("  Tag Keys - App: %s\n", s.TagAppKeys)
 		if s.ScheduleEnabled {
 			fmt.Printf("  Schedule: enabled (cron: %s, id: %s, jitter: %s)\n",
@@ -160,29 +182,36 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	st := memory.NewStore()
 	fmt.Println("✓ In-memory store initialized")
 
-	// Initialize S3 snapshot store
-	var snapshotStore *snapshot.S3Store
+	// Initialize snapshot store. Production runs use S3; laptop dev / CI
+	// smoke tests can use the in-memory store via `SNAPSHOT_STORE=memory`
+	// to avoid needing AWS credentials.
+	var snapshotStore snapshot.Store
 	ctx := context.Background()
-	configOpts := []func(*config.LoadOptions) error{config.WithRegion(s.AWSRegion)}
-	cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
-	if err != nil {
-		fmt.Printf("⚠️  Failed to load AWS config: %v\n", err)
-		fmt.Println("   Snapshots will not be persisted to S3")
+	if s.SnapshotStore == "memory" {
+		snapshotStore = snapshot.NewMemoryStore()
+		fmt.Println("✓ In-memory snapshot store initialized (SNAPSHOT_STORE=memory; not durable)")
 	} else {
-		s3Opts := []func(*s3.Options){}
-		if s.S3Endpoint != "" {
-			s3Opts = append(s3Opts, func(o *s3.Options) {
-				o.BaseEndpoint = &s.S3Endpoint
-				o.UsePathStyle = true
-			})
+		configOpts := []func(*config.LoadOptions) error{config.WithRegion(s.AWSRegion)}
+		cfg, err := config.LoadDefaultConfig(ctx, configOpts...)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to load AWS config: %v\n", err)
+			fmt.Println("   Snapshots will not be persisted to S3")
+		} else {
+			s3Opts := []func(*s3.Options){}
+			if s.S3Endpoint != "" {
+				s3Opts = append(s3Opts, func(o *s3.Options) {
+					o.BaseEndpoint = &s.S3Endpoint
+					o.UsePathStyle = true
+				})
+			}
+			s3Client := s3.NewFromConfig(cfg, s3Opts...)
+			snapshotStore = snapshot.NewS3Store(s3Client, s.S3Bucket, s.S3Prefix)
+			fmt.Printf("✓ S3 snapshot store initialized (bucket: %s)\n", s.S3Bucket)
 		}
-		s3Client := s3.NewFromConfig(cfg, s3Opts...)
-		snapshotStore = snapshot.NewS3Store(s3Client, s.S3Bucket, s.S3Prefix)
-		fmt.Printf("✓ S3 snapshot store initialized (bucket: %s)\n", s.S3Bucket)
 	}
 
 	// Initialize Temporal client
-	temporalClientOptions := client.Options{
+	temporalClient, err := client.Dial(client.Options{
 		HostPort:  s.TemporalEndpoint,
 		Namespace: s.TemporalNamespace,
 		ConnectionOptions: client.ConnectionOptions{
@@ -190,22 +219,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 				grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(20 * 1024 * 1024)), // 20MB for large Wiz reports
 			},
 		},
-	}
-	if s.TemporalMetricsEnabled {
-		metricsHandler, metricsCloser, metricsErr := newTemporalMetricsHandler(s.TemporalMetricsListenAddress)
-		if metricsErr != nil {
-			return metricsErr
-		}
-		defer func() {
-			if closeErr := metricsCloser.Close(); closeErr != nil {
-				slog.Warn("failed to close temporal metrics server", "error", closeErr)
-			}
-		}()
-		temporalClientOptions.MetricsHandler = metricsHandler
-		fmt.Printf("✓ Temporal SDK metrics listening on %s\n", s.TemporalMetricsListenAddress)
-	}
-
-	temporalClient, err := client.Dial(temporalClientOptions)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to connect to Temporal at %s: %w", s.TemporalEndpoint, err)
 	}
@@ -238,9 +252,13 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Println("✓ Wiz credentials configured — using live inventory")
 		wizHTTPClient := wiz.NewHTTPClient(s.WizClientIDSecret, s.WizClientSecretSecret)
 		wizClient = wiz.NewClient(wizHTTPClient, time.Duration(s.WizCacheTTLHours)*time.Hour)
-	} else {
-		fmt.Println("⚠️  No Wiz credentials configured — using mock inventory")
+	} else if s.InventoryFallback == "mock" {
+		fmt.Println("⚠️  No Wiz credentials configured — INVENTORY_FALLBACK=mock will substitute synthetic resources (DEV ONLY)")
 		fmt.Println("   To use live data, set WIZ_CLIENT_ID_SECRET and WIZ_CLIENT_SECRET_SECRET")
+	} else {
+		fmt.Println("⚠️  No Wiz credentials configured — Wiz-sourced resources will be skipped (startup will fail if none remain)")
+		fmt.Println("   To use live data, set WIZ_CLIENT_ID_SECRET and WIZ_CLIENT_SECRET_SECRET")
+		fmt.Println("   For local dev/CI smoke tests, set INVENTORY_FALLBACK=mock")
 	}
 
 	// Create EOL HTTP client (shared across all resources)
@@ -277,15 +295,43 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		// Create inventory source
 		var invSource inventory.InventorySource
 		if resourceCfg.Inventory.Source == "wiz" {
-			if wizClient == nil {
-				// Wiz client not available (no credentials)
-				fmt.Printf("    ⚠️  Skipping %s - Wiz credentials not configured\n", resourceCfg.ID)
+			switch {
+			case wizClient != nil:
+				// Create generic inventory source
+				invSource = wiz.NewGenericInventorySource(wizClient, resourceCfg, registryClient, logger)
+				fmt.Printf("    ✓ Wiz inventory source created (reads from WIZ_REPORT_IDS[%s])\n", resourceCfg.ID)
+			case s.InventoryFallback == "mock":
+				// Explicit dev-only opt-in: substitute a single synthetic
+				// resource so local e2e runs (webhook smoke tests etc.) can
+				// exercise the full detector → snapshot → emitter wire
+				// without CloudSec-issued Wiz credentials. Engine is keyed
+				// off resourceCfg.ID (e.g. "aurora-postgresql") so the
+				// endoflife.date adapters resolve a real lifecycle instead
+				// of producing UNKNOWN.
+				configID := types.ResourceType(resourceCfg.ID)
+				invSource = &mockinv.InventorySource{
+					Resources: []*types.Resource{
+						{
+							ID:             fmt.Sprintf("mock-%s-1", resourceCfg.ID),
+							Service:        "version-guard-mock",
+							Type:           configID,
+							CurrentVersion: "1.0.0",
+							Engine:         resourceCfg.ID,
+							CloudProvider:  types.CloudProviderAWS,
+							DiscoveredAt:   time.Now(),
+							Tags:           map[string]string{"env": "local-dev"},
+						},
+					},
+				}
+				fmt.Printf("    ⚠️  %s - INVENTORY_FALLBACK=mock; using 1 fake resource (DEV ONLY)\n", resourceCfg.ID)
+			default:
+				// No Wiz credentials and no explicit mock opt-in: skip and
+				// let startup fail loudly with "no resources configured".
+				// This protects production from silently emitting
+				// fabricated 1.0.0 findings if a Wiz secret is missing.
+				fmt.Printf("    ⚠️  %s - Wiz credentials not configured; skipping (set INVENTORY_FALLBACK=mock for dev)\n", resourceCfg.ID)
 				continue
 			}
-
-			// Create generic inventory source
-			invSource = wiz.NewGenericInventorySource(wizClient, resourceCfg, registryClient, logger)
-			fmt.Printf("    ✓ Wiz inventory source created (reads from WIZ_REPORT_IDS[%s])\n", resourceCfg.ID)
 		} else {
 			fmt.Printf("    ⚠️  Unsupported inventory source: %s\n", resourceCfg.Inventory.Source)
 			continue
@@ -388,6 +434,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	if snapshotStore != nil {
 		orchestratorActivities := orchestrator.NewActivities(st, snapshotStore)
 		w.RegisterActivityWithOptions(orchestratorActivities.CreateSnapshot, activity.RegisterOptions{Name: orchestrator.CreateSnapshotActivityName})
+		w.RegisterActivityWithOptions(orchestratorActivities.NotifyEmitter, activity.RegisterOptions{Name: orchestrator.NotifyEmitterActivityName})
 		fmt.Println("✓ Orchestrator activities registered (with S3)")
 	} else {
 		fmt.Println("⚠️  Orchestrator snapshot activity not registered (no S3 store)")
@@ -399,7 +446,11 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	}
 
 	// Start HTTP admin server (POST /scan to trigger manual scans)
-	httpServer := startAdminHTTPServer(s.HTTPPort, temporalClient, s.TemporalTaskQueue, defaultResourceTypes)
+	httpServer := startAdminHTTPServer(s.HTTPPort, temporalClient, s.TemporalTaskQueue, defaultResourceTypes, s.EmitterWebhookURL)
+
+	if s.EmitterWebhookURL != "" {
+		fmt.Printf("✓ Emitter webhook configured: %s/trigger-act\n", strings.TrimRight(s.EmitterWebhookURL, "/"))
+	}
 
 	// Start worker
 	fmt.Printf("\n✓ Temporal worker starting on queue: %s\n", s.TemporalTaskQueue)
@@ -449,12 +500,13 @@ func (s *ServerCLI) ensureSchedule(ctx context.Context, temporalClient client.Cl
 	schedCtx, schedCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer schedCancel()
 	schedErr := scheduleMgr.EnsureSchedule(schedCtx, schedule.Config{
-		Enabled:        true,
-		ScheduleID:     s.ScheduleID,
-		CronExpression: s.ScheduleCron,
-		Jitter:         jitter,
-		TaskQueue:      s.TemporalTaskQueue,
-		ResourceTypes:  defaultResourceTypes,
+		Enabled:           true,
+		ScheduleID:        s.ScheduleID,
+		CronExpression:    s.ScheduleCron,
+		Jitter:            jitter,
+		TaskQueue:         s.TemporalTaskQueue,
+		ResourceTypes:     defaultResourceTypes,
+		EmitterWebhookURL: s.EmitterWebhookURL,
 	})
 	if schedErr != nil {
 		fmt.Printf("⚠️  Failed to create/update schedule: %v\n", schedErr)
@@ -468,8 +520,9 @@ func (s *ServerCLI) ensureSchedule(ctx context.Context, temporalClient client.Cl
 // startAdminHTTPServer wires the scan trigger into an HTTP admin server and
 // starts listening in a background goroutine. The returned *http.Server can be
 // shut down gracefully by the caller.
-func startAdminHTTPServer(port int, temporalClient client.Client, taskQueue string, defaultResourceTypes []types.ResourceType) *http.Server {
-	scanTrigger := scan.NewTrigger(temporalClient, taskQueue, defaultResourceTypes)
+func startAdminHTTPServer(port int, temporalClient client.Client, taskQueue string, defaultResourceTypes []types.ResourceType, emitterWebhookURL string) *http.Server {
+	scanTrigger := scan.NewTrigger(temporalClient, taskQueue, defaultResourceTypes).
+		WithEmitterWebhookURL(emitterWebhookURL)
 	mux := http.NewServeMux()
 	mux.Handle("/scan", scan.NewHandler(scanTrigger))
 

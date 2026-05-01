@@ -55,8 +55,6 @@ services:
     environment:
       TEMPORAL_ENDPOINT: temporal:7233
       TEMPORAL_NAMESPACE: version-guard-dev
-      TEMPORAL_METRICS_ENABLED: ${TEMPORAL_METRICS_ENABLED:-true}
-      TEMPORAL_METRICS_LISTEN_ADDRESS: 0.0.0.0:9090
       S3_BUCKET: version-guard-snapshots
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: minioadmin
@@ -72,4 +70,3 @@ services:
       SCHEDULE_JITTER: ${SCHEDULE_JITTER:-5m}
     ports:
       - "8081:8081"
-      - "9090:9090"

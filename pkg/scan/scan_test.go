@@ -134,12 +134,28 @@ func TestNewTrigger_WiresClientAsStarter(t *testing.T) {
 	// constructor that stores it. Passing nil is enough to exercise the line —
 	// we only assert the fields are wired.
 	defaults := []types.ResourceType{"aurora-mysql"}
-	tr := NewTrigger(nil, "version-guard-orchestrator", defaults)
+	tr := NewTrigger(nil, "version-guard-orchestrator", defaults).
+		WithEmitterWebhookURL("http://emitter:8080")
 
 	require.NotNil(t, tr)
 	assert.Equal(t, "version-guard-orchestrator", tr.taskQueue)
 	assert.Nil(t, tr.starter, "nil client should pass through as nil Starter")
 	assert.Equal(t, defaults, tr.defaultResourceTypes)
+	assert.Equal(t, "http://emitter:8080", tr.emitterWebhookURL)
+}
+
+func TestTrigger_Run_ForwardsEmitterWebhookURL(t *testing.T) {
+	mock := &mockStarter{run: &mockWorkflowRun{id: "wf", runID: "run"}}
+	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", []types.ResourceType{"aurora-mysql"}).
+		WithEmitterWebhookURL("http://emitter:8080")
+
+	_, err := tr.Run(context.Background(), Input{ScanID: "abc"})
+
+	require.NoError(t, err)
+	require.Len(t, mock.calledArgs, 1)
+	in := mock.calledArgs[0].(orchestrator.WorkflowInput)
+	assert.Equal(t, "http://emitter:8080", in.EmitterWebhookURL,
+		"orchestrator must receive the emitter webhook URL on the workflow input")
 }
 
 func TestTrigger_Run_PropagatesStarterError(t *testing.T) {

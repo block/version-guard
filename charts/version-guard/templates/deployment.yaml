@@ -39,20 +39,9 @@ spec:
             - name: http-admin
               containerPort: {{ .Values.adminPort }}
               protocol: TCP
-            {{- if .Values.temporalMetrics.enabled }}
-            - name: http-metrics
-              containerPort: {{ .Values.temporalMetrics.port }}
-              protocol: TCP
-            {{- end }}
           env:
             - name: HTTP_PORT
               value: {{ .Values.adminPort | quote }}
-            - name: TEMPORAL_METRICS_ENABLED
-              value: {{ .Values.temporalMetrics.enabled | quote }}
-            {{- if .Values.temporalMetrics.enabled }}
-            - name: TEMPORAL_METRICS_LISTEN_ADDRESS
-              value: {{ .Values.temporalMetrics.listenAddress | quote }}
-            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

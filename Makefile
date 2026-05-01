@@ -41,7 +41,7 @@ setup: ## Initial setup (install tools, setup hooks)
 build: ## Build the server binary
 	@echo "🔨 Building $(BINARY_NAME) server..."
 	@mkdir -p bin
-	@go build -o bin/$(BINARY_NAME) ./cmd/server
+	@go build -o bin/$(BINARY_NAME) cmd/server/main.go
 	@echo "✅ Build complete: bin/$(BINARY_NAME)"
 
 .PHONY: build-cli
@@ -147,10 +147,15 @@ temporal: ## Start local Temporal dev server and open Web UI
 		--dynamic-config-value limit.blobSize.warn=15000000
 
 .PHONY: dev
-dev: ## Run the service locally with auto-reload on code changes
+dev: ## Run the service locally (auto-reload if `entr` is installed)
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
-	echo "🚀 Starting Version Guard with auto-reload (Ctrl+C to stop)..."; \
-	find . -name '*.go' -not -path './vendor/*' | entr -r go run ./cmd/server
+	if command -v entr >/dev/null 2>&1; then \
+		echo "🚀 Starting Version Guard with auto-reload via entr (Ctrl+C to stop)..."; \
+		find . -name '*.go' -not -path './vendor/*' | entr -r go run ./cmd/server; \
+	else \
+		echo "🚀 Starting Version Guard (no auto-reload — install entr for that). Ctrl+C to stop..."; \
+		go run ./cmd/server; \
+	fi
 
 .PHONY: run-locally
 run-locally: build ## Run the service locally (connects to local Temporal)
@@ -166,6 +171,68 @@ run-worker: build ## Run Temporal worker locally
 run-server: build ## Run server locally
 	@echo "🚀 Starting server locally..."
 	@CONFIG_ENV=development bin/$(BINARY_NAME) --mode=server
+
+# ── Webhook E2E (detector → emitter) ──────────────────────────────────────────
+# Everything below runs in Docker, so no local `temporal` or `curl` install is required.
+# Pre-reqs (run in separate terminals before invoking these targets):
+#   1. make temporal-docker                                       (Temporal dev server in Docker)
+#   2. (in version-guard-emitter) make dev                         (emitter worker + HTTP on host :8082, via .env)
+#   3. EMITTER_WEBHOOK_URL=http://localhost:8082 make dev          (detector worker + admin HTTP on host :8081)
+# Resource value must be a config ID (the `id:` field in pkg/config/defaults
+# resources.yaml: aurora-postgresql, aurora-mysql, eks, elasticache-redis,
+# elasticache-valkey, elasticache-memcached, opensearch, rds-mysql,
+# rds-postgresql, lambda) — NOT a type constant like "AURORA". The detector's
+# inventory map is keyed by config ID so multiple configs of the same type
+# (e.g. two aurora flavors) can have independent inventory sources.
+WEBHOOK_E2E_RESOURCE    := aurora-postgresql
+TEMPORAL_DOCKER_IMAGE   := temporalio/admin-tools:latest
+CURL_DOCKER_IMAGE       := curlimages/curl:latest
+# Inside containers we reach host-side processes via host.docker.internal (Docker Desktop on macOS/Windows).
+HOST_FROM_DOCKER        := host.docker.internal
+# Host ports
+DETECTOR_ADMIN_PORT     := 8081
+EMITTER_ADMIN_PORT      := 8082
+
+.PHONY: temporal-docker
+temporal-docker: ## Start Temporal dev server in Docker (alternative to `make temporal`)
+	@echo "🕰️  Starting Temporal dev server in Docker (namespace: $(TEMPORAL_NAMESPACE))..."
+	@echo "   Frontend: localhost:7233    Web UI: http://localhost:8233"
+	@open http://localhost:8233 &
+	@docker run --rm \
+		--name version-guard-temporal-dev \
+		-p 7233:7233 -p 8233:8233 \
+		$(TEMPORAL_DOCKER_IMAGE) \
+		temporal server start-dev \
+			--ip 0.0.0.0 \
+			--namespace $(TEMPORAL_NAMESPACE) \
+			--dynamic-config-value limit.blobSize.error=20000000 \
+			--dynamic-config-value limit.blobSize.warn=15000000
+
+.PHONY: webhook-e2e
+webhook-e2e: ## Trigger an end-to-end run via the detector's POST /scan (in Docker)
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@echo "🚀 POST /scan to detector at :$(DETECTOR_ADMIN_PORT) (resource=$(WEBHOOK_E2E_RESOURCE))..."
+	@echo "   Watch: http://localhost:8233/namespaces/$(TEMPORAL_NAMESPACE)/workflows"
+	@docker run --rm \
+		--add-host=$(HOST_FROM_DOCKER):host-gateway \
+		$(CURL_DOCKER_IMAGE) \
+		-fsSi -X POST http://$(HOST_FROM_DOCKER):$(DETECTOR_ADMIN_PORT)/scan \
+			-H 'Content-Type: application/json' \
+			-d '{"resource_types":["$(WEBHOOK_E2E_RESOURCE)"]}'
+	@echo ""
+	@echo "✅ Detector orchestrator workflow started; expect a matching version-guard-act-<snapshotID> ActWorkflow on the emitter."
+
+.PHONY: webhook-e2e-smoke
+webhook-e2e-smoke: ## Hit the emitter /trigger-act webhook directly (no detector) via Docker
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@SID="smoke-$$(date +%s)"; \
+	echo "🔎 POST /trigger-act to emitter at :$(EMITTER_ADMIN_PORT) with snapshot_id=$$SID..."; \
+	docker run --rm \
+		--add-host=$(HOST_FROM_DOCKER):host-gateway \
+		$(CURL_DOCKER_IMAGE) \
+		-fsSi -X POST http://$(HOST_FROM_DOCKER):$(EMITTER_ADMIN_PORT)/trigger-act \
+			-H 'Content-Type: application/json' \
+			-d "{\"snapshot_id\":\"$$SID\"}"
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 
