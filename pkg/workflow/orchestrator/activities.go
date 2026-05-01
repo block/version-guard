@@ -37,7 +37,7 @@ type SnapshotResult struct {
 type Activities struct {
 	Store         store.Store
 	SnapshotStore snapshot.Store
-	// HTTPDoer is used by NotifyEmitter for the Stage 3 webhook. Optional;
+	// HTTPDoer is used by NotifyEmitter for the emitter webhook. Optional;
 	// nil falls back to a default *http.Client with a 10s timeout. Tests
 	// inject a fake to avoid real HTTP.
 	HTTPDoer HTTPDoer

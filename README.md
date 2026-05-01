@@ -178,7 +178,7 @@ them, or set `TEMPORAL_METRICS_LISTEN_ADDRESS` to use a different address.
 
 #### Optional: out-of-process webhook emitter
 
-Block runs an internal companion service that consumes snapshots and posts findings to its security tooling (private repo, not publicly available). The orchestrator's Stage 3 webhook (`EMITTER_WEBHOOK_URL`) is the link between detector and that service. **Most open-source users don't need it** — implement an in-process emitter against the `pkg/emitters` interfaces instead (see [Extending Version Guard](#-extending-version-guard)).
+Block runs an internal companion service that consumes snapshots and posts findings to its security tooling (private repo, not publicly available). The orchestrator's optional emitter webhook (`EMITTER_WEBHOOK_URL`) is the link between detector and that service. **Most open-source users don't need it** — implement an in-process emitter against the `pkg/emitters` interfaces instead (see [Extending Version Guard](#-extending-version-guard)).
 
 If you do have your own webhook-style emitter that exposes `POST /trigger-act`, you can wire it into the compose stack via the `with-emitter` profile:
 
@@ -343,7 +343,7 @@ Version Guard is configured via environment variables or CLI flags:
 | `SCHEDULE_JITTER` | Random jitter to prevent thundering herd | `5m` |
 | `SNAPSHOT_STORE` | Snapshot backend: `s3` or `memory` (in-process; for laptop dev / CI smoke tests) | `s3` |
 | `INVENTORY_FALLBACK` | When Wiz creds are missing: empty (skip resource and fail-fast) or `mock` (synthesize 1 fake resource per config — dev only, never set in production) | _(empty)_ |
-| `EMITTER_WEBHOOK_URL` | Optional. Base URL of an out-of-process emitter that exposes `POST /trigger-act`. When set, the orchestrator workflow notifies it after each snapshot is persisted (Stage 3). Empty disables the webhook — Version Guard still ships findings via in-process emitters and S3. See [Extending Version Guard](#-extending-version-guard) below. | _(empty)_ |
+| `EMITTER_WEBHOOK_URL` | Optional. Base URL of an out-of-process emitter that exposes `POST /trigger-act`. When set, the orchestrator workflow notifies it after each snapshot is persisted. Empty disables the webhook — Version Guard still ships findings via in-process emitters and S3. See [Extending Version Guard](#-extending-version-guard) below. | _(empty)_ |
 | `--verbose` / `-v` | Enable debug-level logging | `false` |
 
 **Custom Resource Catalog:**
@@ -479,7 +479,7 @@ type DashboardEmitter interface {
 
 ### 2. Out-of-process Emitter via Webhook (Optional)
 
-For users who already run a separate service that consumes snapshots (e.g. a long-running worker that writes to a different system), Version Guard can **notify** that service every time a snapshot is persisted, instead of (or in addition to) calling in-process emitters. Set `EMITTER_WEBHOOK_URL=https://your-emitter.example.com` and the orchestrator workflow's Stage 3 will:
+For users who already run a separate service that consumes snapshots (e.g. a long-running worker that writes to a different system), Version Guard can **notify** that service every time a snapshot is persisted, instead of (or in addition to) calling in-process emitters. Set `EMITTER_WEBHOOK_URL=https://your-emitter.example.com` and the orchestrator workflow will:
 
 1. POST `{"snapshot_id": "<id>"}` to `<EMITTER_WEBHOOK_URL>/trigger-act`.
 2. Expect a `2xx` response (the body is logged but not required to follow any schema).
@@ -532,7 +532,7 @@ s3://your-bucket/snapshots/latest.json
 **Consume snapshots with:**
 - AWS Lambda triggered on S3 events
 - Scheduled cron job reading `latest.json`
-- Custom Temporal workflow (implement `Stage 3: ACT`)
+- Custom Temporal workflow (implement your own follow-up workflow)
 
 ## 📖 Documentation
 

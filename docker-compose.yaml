@@ -70,10 +70,10 @@ services:
       SCHEDULE_CRON: ${SCHEDULE_CRON:-0 6 * * *}
       SCHEDULE_ID: ${SCHEDULE_ID:-version-guard-scan}
       SCHEDULE_JITTER: ${SCHEDULE_JITTER:-5m}
-      # Stage 3 webhook: only meaningful when the `with-emitter` compose
+      # emitter webhook: only meaningful when the `with-emitter` compose
       # profile is active (the `emitter` service below). When the
       # profile is off, the emitter service isn't built/started and the
-      # detector will fail to POST /trigger-act — Stage 3 failures are
+      # detector will fail to POST /trigger-act — Webhook failures are
       # non-fatal so the snapshot still lands in MinIO.
       EMITTER_WEBHOOK_URL: ${EMITTER_WEBHOOK_URL:-http://emitter:8080}
       # Synthesize 1 fake resource per config when no Wiz creds are set,

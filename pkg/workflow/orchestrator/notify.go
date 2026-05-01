@@ -13,7 +13,7 @@ import (
 	"go.temporal.io/sdk/activity"
 )
 
-// NotifyEmitterActivityName is the registered name of the Stage 3 webhook
+// NotifyEmitterActivityName is the registered name of the emitter webhook
 // activity that pings the downstream emitter once the snapshot is in S3.
 const NotifyEmitterActivityName = "version-guard.NotifyEmitter"
 
@@ -54,7 +54,7 @@ func (a *Activities) NotifyEmitter(ctx context.Context, input NotifyEmitterInput
 	logger.Info("Notifying emitter", "url", input.EmitterWebhookURL, "snapshotID", input.SnapshotID)
 
 	url := strings.TrimRight(input.EmitterWebhookURL, "/") + "/trigger-act"
-	// Stage 3 only runs after CreateSnapshot has populated SnapshotID, so
+	// NotifyEmitter only runs after CreateSnapshot has populated SnapshotID, so
 	// we always send the field. No omitempty: the contract is "the
 	// detector tells the emitter exactly which snapshot to read", with
 	// no implicit "latest" fallback.

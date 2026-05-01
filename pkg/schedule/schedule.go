@@ -21,7 +21,7 @@ type Config struct {
 	CronExpression string
 	TaskQueue      string
 	// EmitterWebhookURL, when non-empty, is forwarded into every
-	// scheduled OrchestratorWorkflow run so it can fire the Stage 3
+	// scheduled OrchestratorWorkflow run so it can fire the
 	// notify activity once the snapshot is persisted. Empty disables
 	// the webhook for scheduled runs.
 	EmitterWebhookURL string

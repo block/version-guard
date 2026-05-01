@@ -262,7 +262,7 @@ compose-up-detector: ## Detector + Temporal + MinIO + endoflife only (no emitter
 	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
 	@echo "🐳 Bringing up detector-only stack..."
 	@$(COMPOSE_BASE) up --build -d
-	@echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT). Stage 3 webhook will fail (non-fatal) — snapshots still land in MinIO."
+	@echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT). emitter webhook will fail (non-fatal) — snapshots still land in MinIO."
 
 .PHONY: compose-down
 compose-down: ## Tear down the compose stack and remove volumes

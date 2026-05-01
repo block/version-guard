@@ -430,7 +430,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
     // Stage 2: STORE - Create S3 snapshot
     workflow.ExecuteActivity(ctx, CreateSnapshotActivity, ...)
 
-    // Stage 3: NOTIFY - Optional out-of-process emitter webhook.
+    // Notify the optional out-of-process emitter webhook.
     // Skipped when input.EmitterWebhookURL is empty. Failures are
     // non-fatal because the snapshot is already durable in S3.
     if input.EmitterWebhookURL != "" {
@@ -441,7 +441,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 }
 ```
 
-**Stage 3 (optional):** When `EMITTER_WEBHOOK_URL` is set, the orchestrator POSTs `{"snapshot_id": "<id>"}` to `<url>/trigger-act` so a downstream service can pick up the snapshot immediately instead of polling. Most users either skip Stage 3 entirely or implement an in-process emitter (`pkg/emitters`) — see the README's "Extending Version Guard" section.
+**Optional emitter webhook:** When `EMITTER_WEBHOOK_URL` is set, the orchestrator POSTs `{"snapshot_id": "<id>"}` to `<url>/trigger-act` so a downstream service can pick up the snapshot immediately instead of polling. Most users either skip the webhook entirely or implement an in-process emitter (`pkg/emitters`) — see the README's "Extending Version Guard" section.
 
 **Scheduling:**
 - Run on a schedule (e.g., every 6 hours)

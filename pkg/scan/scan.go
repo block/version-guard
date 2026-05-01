@@ -60,7 +60,7 @@ func NewTriggerWithStarter(s Starter, taskQueue string, defaultResourceTypes []t
 }
 
 // WithEmitterWebhookURL returns a copy of the trigger configured to forward
-// the given URL to every started OrchestratorWorkflow. The Stage 3 notify
+// the given URL to every started OrchestratorWorkflow. The notify
 // activity in the orchestrator is gated on this field being non-empty.
 func (t *Trigger) WithEmitterWebhookURL(url string) *Trigger {
 	clone := *t

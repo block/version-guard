@@ -79,7 +79,7 @@ type ServerCLI struct {
 	// Service configuration
 	HTTPPort int `help:"HTTP admin port (POST /scan)" default:"8081" env:"HTTP_PORT"`
 
-	// Emitter webhook (Stage 3). When set, OrchestratorWorkflow POSTs to
+	// Emitter webhook (emitter webhook). When set, OrchestratorWorkflow POSTs to
 	// "<url>/trigger-act" after the snapshot is persisted, kicking the
 	// downstream emitter immediately instead of waiting for its own cron.
 	// Empty disables the webhook (snapshot still lands in S3 for any

@@ -175,7 +175,7 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 // setting EMITTER_WEBHOOK_URL on a deployment whose schedule already
 // exists must propagate into the schedule's WorkflowInput. Without this
 // path, scheduled orchestrator runs would carry the stale (empty)
-// EmitterWebhookURL forever and Stage 3 would silently no-op.
+// EmitterWebhookURL forever and the notify activity would silently no-op.
 func TestEnsureSchedule_AlreadyExists_NewWebhookURL(t *testing.T) {
 	handle := &mockScheduleHandle{
 		id: "test-schedule",

@@ -31,7 +31,7 @@ const (
 type WorkflowInput struct {
 	ScanID string
 	// EmitterWebhookURL, when set, makes the orchestrator POST to
-	// "<url>/trigger-act" after the snapshot is persisted (Stage 3).
+	// "<url>/trigger-act" after the snapshot is persisted (emitter webhook).
 	// Empty disables the webhook — the snapshot remains durable in S3
 	// and downstream emitters can pull on their own cadence.
 	EmitterWebhookURL string
@@ -206,7 +206,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 
 	logger.Info("Stage 2: Store - Snapshot created and persisted", "snapshotID", snapshotResult.SnapshotID)
 
-	// Stage 3: NOTIFY EMITTER (optional)
+	// NOTIFY EMITTER (optional out-of-process webhook)
 	//
 	// When EmitterWebhookURL is configured, POST the snapshot id to the
 	// downstream emitter so it can start its own workflow against the
@@ -215,7 +215,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// implementers can subscribe to S3 events, poll, or run a schedule
 	// instead — the webhook is one supported integration, not the only one.
 	if input.EmitterWebhookURL != "" {
-		logger.Info("Stage 3: Notify - Calling emitter webhook",
+		logger.Info("Notify - Calling emitter webhook",
 			"url", input.EmitterWebhookURL,
 			"snapshotID", snapshotResult.SnapshotID)
 
@@ -238,17 +238,17 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		).Get(ctx, &notifyResult)
 
 		if notifyErr != nil {
-			logger.Warn("Stage 3: Notify - Emitter webhook failed; snapshot remains in S3 for later pickup",
+			logger.Warn("Notify - Emitter webhook failed; snapshot remains in S3 for later pickup",
 				"error", notifyErr,
 				"snapshotID", snapshotResult.SnapshotID)
 		} else {
-			logger.Info("Stage 3: Notify - Emitter accepted snapshot",
+			logger.Info("Notify - Emitter accepted snapshot",
 				"snapshotID", snapshotResult.SnapshotID,
 				"emitterWorkflowID", notifyResult.WorkflowID,
 				"emitterRunID", notifyResult.RunID)
 		}
 	} else {
-		logger.Info("Stage 3: Notify - Skipped (no EmitterWebhookURL configured); snapshot available in S3",
+		logger.Info("Notify - Skipped (no EmitterWebhookURL configured); snapshot available in S3",
 			"snapshotID", snapshotResult.SnapshotID)
 	}
 
