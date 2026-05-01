@@ -255,7 +255,7 @@ compose-up: ## Full stack incl. emitter (requires EMITTER_PATH or sibling ../ver
 	fi
 	@echo "🐳 Bringing up full stack (detector + emitter + Temporal + MinIO + endoflife)..."
 	@$(COMPOSE_BASE) --profile with-emitter up --build -d
-	@echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT), emitter :$(EMITTER_ADMIN_PORT), Temporal UI http://localhost:8233"
+	@echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT), emitter :8083 (host) → :8080 (container), Temporal UI http://localhost:8233"
 
 .PHONY: compose-up-detector
 compose-up-detector: ## Detector + Temporal + MinIO + endoflife only (no emitter — useful when EMITTER_PATH unavailable)
