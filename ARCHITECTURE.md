@@ -664,7 +664,7 @@ make run-locally  # One-shot
 
 ### Monitoring
 
-- **Metrics**: Expose Prometheus metrics from HTTP admin service
+- **Metrics**: Expose Temporal SDK Prometheus metrics from the worker process
 - **Logs**: Structured JSON logging via `log/slog`
   - Machine-readable JSON format for log aggregation tools (Datadog, Splunk, CloudWatch Insights)
   - Context-aware logging with typed fields for queryable log data

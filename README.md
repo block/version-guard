@@ -166,11 +166,15 @@ docker compose up --build
 | `temporal` | Workflow orchestration | `7233` (gRPC), `8233` (Web UI) |
 | `minio` | S3-compatible snapshot storage | `9000` (API), `9001` (Console) |
 | `endoflife` | Local EOL data override (nginx) | `8082` |
-| `version-guard` | The server | `8081` (HTTP admin) |
+| `version-guard` | The server | `8081` (HTTP admin), `9090` (Temporal SDK metrics) |
 
 The `endoflife` service serves patched EOL data for products with pending upstream PRs on [endoflife.date](https://endoflife.date), and proxies everything else to the live API. See [`deploy/endoflife-override/README.md`](./deploy/endoflife-override/README.md) for details on adding or updating overrides.
 
 Once running, open the Temporal Web UI at http://localhost:8233 to trigger and monitor workflows.
+
+Temporal SDK metrics are enabled by default and exposed at
+http://localhost:9090/metrics. Set `TEMPORAL_METRICS_ENABLED=false` to disable
+them, or set `TEMPORAL_METRICS_LISTEN_ADDRESS` to use a different address.
 
 #### Optional: out-of-process webhook emitter
 
