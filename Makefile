@@ -234,6 +234,59 @@ webhook-e2e-smoke: ## Hit the emitter /trigger-act webhook directly (no detector
 			-H 'Content-Type: application/json' \
 			-d "{\"snapshot_id\":\"$$SID\"}"
 
+# ── Docker Compose (full stack) ───────────────────────────────────────────────
+# `make compose-*` targets bring up Temporal + MinIO + endoflife + detector,
+# and (with the `with-emitter` profile) the emitter alongside. The emitter
+# build context defaults to ../version-guard-emitter (sibling checkout); set
+# EMITTER_PATH to point elsewhere if your checkout is at a different path:
+#   make compose-up EMITTER_PATH=/Users/me/code/version-guard-emitter
+# Other devs without the emitter source can just run `make compose-up-detector`
+# (skips the emitter profile) to exercise the rest of the stack.
+EMITTER_PATH      ?= ../version-guard-emitter
+COMPOSE_PROJECT   := version-guard
+COMPOSE_BASE      := EMITTER_PATH=$(EMITTER_PATH) docker compose -p $(COMPOSE_PROJECT)
+
+.PHONY: compose-up
+compose-up: ## Full stack incl. emitter (requires EMITTER_PATH or sibling ../version-guard-emitter)
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@if [ ! -d "$(EMITTER_PATH)" ]; then \
+	  echo "❌ EMITTER_PATH=$(EMITTER_PATH) does not exist. Set EMITTER_PATH=/path/to/version-guard-emitter or use \`make compose-up-detector\`."; \
+	  exit 1; \
+	fi
+	@echo "🐳 Bringing up full stack (detector + emitter + Temporal + MinIO + endoflife)..."
+	@$(COMPOSE_BASE) --profile with-emitter up --build -d
+	@echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT), emitter :$(EMITTER_ADMIN_PORT), Temporal UI http://localhost:8233"
+
+.PHONY: compose-up-detector
+compose-up-detector: ## Detector + Temporal + MinIO + endoflife only (no emitter — useful when EMITTER_PATH unavailable)
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@echo "🐳 Bringing up detector-only stack..."
+	@$(COMPOSE_BASE) up --build -d
+	@echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT). Stage 3 webhook will fail (non-fatal) — snapshots still land in MinIO."
+
+.PHONY: compose-down
+compose-down: ## Tear down the compose stack and remove volumes
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@$(COMPOSE_BASE) --profile with-emitter down -v --remove-orphans
+	@echo "✅ Stack torn down."
+
+.PHONY: compose-logs
+compose-logs: ## Tail logs from all compose services
+	@$(COMPOSE_BASE) --profile with-emitter logs -f --tail=200
+
+.PHONY: compose-e2e
+compose-e2e: compose-up ## Full e2e: bring up the stack, fire /scan, tail logs (Ctrl+C to stop)
+	@echo "⏳ Waiting 10s for detector + emitter to register workflows..."
+	@sleep 10
+	@echo "🚀 POST /scan (resource=$(WEBHOOK_E2E_RESOURCE))..."
+	@docker run --rm --network $(COMPOSE_PROJECT)_default $(CURL_DOCKER_IMAGE) \
+		-fsSi -X POST http://version-guard:8081/scan \
+			-H 'Content-Type: application/json' \
+			-d '{"resource_types":["$(WEBHOOK_E2E_RESOURCE)"]}' || true
+	@echo ""
+	@echo "✅ Scan triggered. Tailing logs (Ctrl+C to stop, then run \`make compose-down\` to clean up)."
+	@$(COMPOSE_BASE) --profile with-emitter logs -f
+
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 .PHONY: docker-build

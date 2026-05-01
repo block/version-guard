@@ -55,6 +55,8 @@ services:
     environment:
       TEMPORAL_ENDPOINT: temporal:7233
       TEMPORAL_NAMESPACE: version-guard-dev
+      TEMPORAL_METRICS_ENABLED: ${TEMPORAL_METRICS_ENABLED:-true}
+      TEMPORAL_METRICS_LISTEN_ADDRESS: 0.0.0.0:9090
       S3_BUCKET: version-guard-snapshots
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: minioadmin
@@ -68,5 +70,50 @@ services:
       SCHEDULE_CRON: ${SCHEDULE_CRON:-0 6 * * *}
       SCHEDULE_ID: ${SCHEDULE_ID:-version-guard-scan}
       SCHEDULE_JITTER: ${SCHEDULE_JITTER:-5m}
+      # Stage 3 webhook: only meaningful when the `with-emitter` compose
+      # profile is active (the `emitter` service below). When the
+      # profile is off, the emitter service isn't built/started and the
+      # detector will fail to POST /trigger-act — Stage 3 failures are
+      # non-fatal so the snapshot still lands in MinIO.
+      EMITTER_WEBHOOK_URL: ${EMITTER_WEBHOOK_URL:-http://emitter:8080}
+      # Synthesize 1 fake resource per config when no Wiz creds are set,
+      # so the detector → snapshot path produces output without external
+      # CloudSec access. NEVER set this in production.
+      INVENTORY_FALLBACK: ${INVENTORY_FALLBACK:-mock}
     ports:
       - "8081:8081"
+      - "9090:9090"
+
+  # Optional emitter service — opt in with `--profile with-emitter`.
+  # The build context defaults to the sibling `../version-guard-emitter`
+  # checkout; override with EMITTER_PATH for any other location, e.g.:
+  #   EMITTER_PATH=/path/to/your/emitter docker compose --profile with-emitter up --build
+  # Devs without the emitter source can leave the profile off and still
+  # exercise the detector + Temporal + MinIO + endoflife stack.
+  emitter:
+    profiles: ["with-emitter"]
+    build:
+      context: ${EMITTER_PATH:-../version-guard-emitter}
+      dockerfile: Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      TEMPORAL_ENDPOINT: temporal:7233
+      TEMPORAL_NAMESPACE: version-guard-dev
+      TEMPORAL_TASK_QUEUE: version-guard-act
+      ADMIN_PORT: "8080"
+      S3_BUCKET: version-guard-snapshots
+      S3_PREFIX: snapshots
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      # AWS SDK Go v2 honours AWS_ENDPOINT_URL_S3 for MinIO routing
+      # without code changes — the emitter doesn't expose its own
+      # S3_ENDPOINT flag yet.
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
+    ports:
+      - "8082:8080"
