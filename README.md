@@ -176,29 +176,21 @@ Temporal SDK metrics are enabled by default and exposed at
 http://localhost:9090/metrics. Set `TEMPORAL_METRICS_ENABLED=false` to disable
 them, or set `TEMPORAL_METRICS_LISTEN_ADDRESS` to use a different address.
 
-#### Optional: out-of-process webhook emitter
+#### End-to-end with `make compose-*`
 
-Block runs an internal companion service that consumes snapshots and posts findings to its security tooling (private repo, not publicly available). The orchestrator's optional emitter webhook (`EMITTER_WEBHOOK_URL`) is the link between detector and that service. **Most open-source users don't need it** — implement an in-process emitter against the `pkg/emitters` interfaces instead (see [Extending Version Guard](#-extending-version-guard)).
-
-If you do have your own webhook-style emitter that exposes `POST /trigger-act`, you can wire it into the compose stack via the `with-emitter` profile:
+The same commands work for everyone — they auto-detect whether a webhook-style emitter is present and adjust accordingly:
 
 ```bash
-# Sibling checkout (default): ../version-guard-emitter
-make compose-up
-
-# Custom path
-make compose-up EMITTER_PATH=/path/to/your/emitter
-
-# Detector + Temporal + MinIO + endoflife only (no emitter)
-make compose-up-detector
-
-# Single-command e2e: build → up → POST /scan → tail logs
-make compose-e2e
-
+make compose-e2e    # build → up → POST /scan → tail logs
 make compose-down   # tear everything down
 ```
 
-The emitter service uses Compose's [profiles](https://docs.docker.com/compose/profiles/) so it stays opt-in — `docker compose up` without `--profile with-emitter` skips it entirely.
+- **Open-source users (no emitter):** detector + Temporal + MinIO + endoflife come up. The orchestrator still posts to `EMITTER_WEBHOOK_URL`; with no listener it logs a single non-fatal failure and the snapshot still lands in MinIO. Use this to verify the DETECT → STORE pipeline.
+- **Block (or anyone with a webhook emitter):** drop a sibling checkout at `../version-guard-emitter`, or set `EMITTER_PATH=/path/to/your/emitter`, and the same `make compose-e2e` brings up the emitter alongside via Compose's [`with-emitter` profile](https://docs.docker.com/compose/profiles/) and exercises the full DETECT → STORE → ACT flow.
+
+##### Emitter integration model
+
+Block runs an internal companion service that consumes snapshots and posts findings to its security tooling (private repo, not publicly available). The orchestrator's optional emitter webhook (`EMITTER_WEBHOOK_URL`) is the link between detector and that service. **Most open-source users don't need it** — implement an in-process emitter against the `pkg/emitters` interfaces instead (see [Extending Version Guard](#-extending-version-guard)). The webhook path is for users who prefer to keep their emitter in a separate process or repository.
 
 ### Run Locally (manual)
 
