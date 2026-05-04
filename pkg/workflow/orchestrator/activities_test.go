@@ -143,9 +143,9 @@ func TestActivities_CreateSnapshot_PersistFailureReturnsError(t *testing.T) {
 }
 
 func TestActivities_CreateSnapshot_EmptyFindings(t *testing.T) {
-	// No findings in the store → snapshot is built with zero counts but
-	// the activity still succeeds. This mirrors the workflow's
-	// "successful child but empty inventory" path.
+	// No findings in the store and the detection workflow also reported
+	// 0 → snapshot is built with zero counts and the activity still
+	// succeeds. Mirrors the "successful child but empty inventory" path.
 	st := memory.NewStore()
 	fakeSnap := &fakeSnapshotStore{}
 	a := NewActivities(st, fakeSnap)
@@ -155,9 +155,40 @@ func TestActivities_CreateSnapshot_EmptyFindings(t *testing.T) {
 		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
 		ScanStartTime: time.Now(),
 		ScanEndTime:   time.Now(),
+		ExpectedFindingsCounts: map[types.ResourceType]int{
+			types.ResourceTypeAurora: 0,
+		},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.TotalFindings)
 	assert.Equal(t, "scan-empty", result.SnapshotID)
 	require.NotNil(t, fakeSnap.saved)
+}
+
+func TestActivities_CreateSnapshot_FindingsCountMismatch_FailsWithoutSaving(t *testing.T) {
+	// Detection workflow reported 5 aurora findings but the in-memory
+	// store has none — this is the "worker died after detection
+	// stored findings, snapshot retried on a fresh worker" scenario.
+	// The activity must error out and NOT persist anything to S3.
+	st := memory.NewStore()
+	fakeSnap := &fakeSnapshotStore{}
+	a := NewActivities(st, fakeSnap)
+
+	_, err := runCreateSnapshotActivity(t, a, &CreateSnapshotInput{
+		ScanID:        "scan-mismatch",
+		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
+		ScanStartTime: time.Now(),
+		ScanEndTime:   time.Now(),
+		ExpectedFindingsCounts: map[types.ResourceType]int{
+			types.ResourceTypeAurora: 5,
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "findings count mismatch")
+	assert.Contains(t, err.Error(), "expected 5")
+	assert.Contains(t, err.Error(), "found 0")
+
+	// And critically: nothing was persisted to S3.
+	assert.Equal(t, 0, fakeSnap.saveCallCount, "must not call SaveSnapshot when validation fails")
+	assert.Nil(t, fakeSnap.saved)
 }

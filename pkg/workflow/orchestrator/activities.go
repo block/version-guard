@@ -25,6 +25,19 @@ type CreateSnapshotInput struct {
 	ResourceTypes []types.ResourceType
 	ScanStartTime time.Time
 	ScanEndTime   time.Time
+
+	// ExpectedFindingsCounts is the per-resource-type findings count that
+	// the corresponding detection workflow reported. CreateSnapshot
+	// compares it to what it actually finds in the store and refuses to
+	// persist a snapshot if any expected count is missing.
+	//
+	// This guards against the "worker OOM mid-scan" failure mode where
+	// detection workflows store findings in worker-local memory, the
+	// worker dies, and a retry of CreateSnapshot on a fresh worker would
+	// otherwise read an empty store and silently publish a 0-finding
+	// snapshot to S3. With expected counts the activity fails (and
+	// Temporal retries it) instead of persisting garbage.
+	ExpectedFindingsCounts map[types.ResourceType]int
 }
 
 type SnapshotResult struct {
@@ -72,6 +85,21 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 			return nil, fmt.Errorf("retrieve findings for %s: %w", resourceType, err)
 		}
 		logger.Info("Retrieved findings for snapshot", "resourceType", resourceType, "count", len(findings))
+
+		// Refuse to persist a snapshot whose findings disagree with what
+		// the detection workflow reported. This catches the case where
+		// the worker that ran detection died (e.g. OOMKilled) and a
+		// retry of CreateSnapshot lands on a fresh worker with an empty
+		// in-memory store — without this check the activity would
+		// happily publish a 0-finding snapshot to S3.
+		if expected, ok := input.ExpectedFindingsCounts[resourceType]; ok && len(findings) != expected {
+			return nil, fmt.Errorf(
+				"findings count mismatch for %s: expected %d (from detection workflow), found %d in store; "+
+					"the worker that ran detection likely restarted before the snapshot was persisted",
+				resourceType, expected, len(findings),
+			)
+		}
+
 		builder.AddFindings(resourceType, findings)
 	}
 

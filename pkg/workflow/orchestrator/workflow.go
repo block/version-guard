@@ -137,6 +137,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// order pinned to the input order, which the caller controls.
 	resourceTypeResults := make(map[types.ResourceType]*ResourceTypeResult, len(resourceTypes))
 	successfulTypes := make([]types.ResourceType, 0, len(resourceTypes))
+	expectedFindingsCounts := make(map[types.ResourceType]int, len(resourceTypes))
 
 	for _, resourceType := range resourceTypes {
 		future := futures[resourceType]
@@ -166,6 +167,7 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 
 		resourceTypeResults[resourceType] = result
 		successfulTypes = append(successfulTypes, resourceType)
+		expectedFindingsCounts[resourceType] = output.FindingsCount
 	}
 
 	logger.Info("Stage 1: Detect - All detection workflows completed", "successCount", len(successfulTypes))
@@ -185,10 +187,11 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		}),
 		CreateSnapshotActivityName,
 		CreateSnapshotInput{
-			ScanID:        input.ScanID,
-			ResourceTypes: successfulTypes,
-			ScanStartTime: startTime,
-			ScanEndTime:   workflow.Now(ctx),
+			ScanID:                 input.ScanID,
+			ResourceTypes:          successfulTypes,
+			ScanStartTime:          startTime,
+			ScanEndTime:            workflow.Now(ctx),
+			ExpectedFindingsCounts: expectedFindingsCounts,
 		},
 	).Get(ctx, &snapshotResult)
 
