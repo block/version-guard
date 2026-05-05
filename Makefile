@@ -147,10 +147,15 @@ temporal: ## Start local Temporal dev server and open Web UI
 		--dynamic-config-value limit.blobSize.warn=15000000
 
 .PHONY: dev
-dev: ## Run the service locally with auto-reload on code changes
+dev: ## Run the service locally (auto-reload if `entr` is installed)
 	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
-	echo "🚀 Starting Version Guard with auto-reload (Ctrl+C to stop)..."; \
-	find . -name '*.go' -not -path './vendor/*' | entr -r go run ./cmd/server
+	if command -v entr >/dev/null 2>&1; then \
+		echo "🚀 Starting Version Guard with auto-reload via entr (Ctrl+C to stop)..."; \
+		find . -name '*.go' -not -path './vendor/*' | entr -r go run ./cmd/server; \
+	else \
+		echo "🚀 Starting Version Guard (no auto-reload — install entr for that). Ctrl+C to stop..."; \
+		go run ./cmd/server; \
+	fi
 
 .PHONY: run-locally
 run-locally: build ## Run the service locally (connects to local Temporal)
@@ -166,6 +171,124 @@ run-worker: build ## Run Temporal worker locally
 run-server: build ## Run server locally
 	@echo "🚀 Starting server locally..."
 	@CONFIG_ENV=development bin/$(BINARY_NAME) --mode=server
+
+# ── Webhook E2E (detector → emitter) ──────────────────────────────────────────
+# Everything below runs in Docker, so no local `temporal` or `curl` install is required.
+# Pre-reqs (run in separate terminals before invoking these targets):
+#   1. make temporal-docker                                       (Temporal dev server in Docker)
+#   2. (in version-guard-emitter) make dev                         (emitter worker + HTTP on host :8082, via .env)
+#   3. EMITTER_WEBHOOK_URL=http://localhost:8082 make dev          (detector worker + admin HTTP on host :8081)
+# Resource value must be a config ID (the `id:` field in pkg/config/defaults
+# resources.yaml: aurora-postgresql, aurora-mysql, eks, elasticache-redis,
+# elasticache-valkey, elasticache-memcached, opensearch, rds-mysql,
+# rds-postgresql, lambda) — NOT a type constant like "AURORA". The detector's
+# inventory map is keyed by config ID so multiple configs of the same type
+# (e.g. two aurora flavors) can have independent inventory sources.
+WEBHOOK_E2E_RESOURCE    := aurora-postgresql
+TEMPORAL_DOCKER_IMAGE   := temporalio/admin-tools:latest
+CURL_DOCKER_IMAGE       := curlimages/curl:latest
+# Inside containers we reach host-side processes via host.docker.internal (Docker Desktop on macOS/Windows).
+HOST_FROM_DOCKER        := host.docker.internal
+# Host ports
+DETECTOR_ADMIN_PORT     := 8081
+EMITTER_ADMIN_PORT      := 8082
+
+.PHONY: temporal-docker
+temporal-docker: ## Start Temporal dev server in Docker (alternative to `make temporal`)
+	@echo "🕰️  Starting Temporal dev server in Docker (namespace: $(TEMPORAL_NAMESPACE))..."
+	@echo "   Frontend: localhost:7233    Web UI: http://localhost:8233"
+	@open http://localhost:8233 &
+	@docker run --rm \
+		--name version-guard-temporal-dev \
+		-p 7233:7233 -p 8233:8233 \
+		$(TEMPORAL_DOCKER_IMAGE) \
+		temporal server start-dev \
+			--ip 0.0.0.0 \
+			--namespace $(TEMPORAL_NAMESPACE) \
+			--dynamic-config-value limit.blobSize.error=20000000 \
+			--dynamic-config-value limit.blobSize.warn=15000000
+
+.PHONY: webhook-e2e
+webhook-e2e: ## Trigger an end-to-end run via the detector's POST /scan (in Docker)
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@echo "🚀 POST /scan to detector at :$(DETECTOR_ADMIN_PORT) (resource=$(WEBHOOK_E2E_RESOURCE))..."
+	@echo "   Watch: http://localhost:8233/namespaces/$(TEMPORAL_NAMESPACE)/workflows"
+	@docker run --rm \
+		--add-host=$(HOST_FROM_DOCKER):host-gateway \
+		$(CURL_DOCKER_IMAGE) \
+		-fsSi -X POST http://$(HOST_FROM_DOCKER):$(DETECTOR_ADMIN_PORT)/scan \
+			-H 'Content-Type: application/json' \
+			-d '{"resource_types":["$(WEBHOOK_E2E_RESOURCE)"]}'
+	@echo ""
+	@echo "✅ Detector orchestrator workflow started; expect a matching version-guard-act-<snapshotID> ActWorkflow on the emitter."
+
+.PHONY: webhook-e2e-smoke
+webhook-e2e-smoke: ## Hit the emitter /trigger-act webhook directly (no detector) via Docker
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@SID="smoke-$$(date +%s)"; \
+	echo "🔎 POST /trigger-act to emitter at :$(EMITTER_ADMIN_PORT) with snapshot_id=$$SID..."; \
+	docker run --rm \
+		--add-host=$(HOST_FROM_DOCKER):host-gateway \
+		$(CURL_DOCKER_IMAGE) \
+		-fsSi -X POST http://$(HOST_FROM_DOCKER):$(EMITTER_ADMIN_PORT)/trigger-act \
+			-H 'Content-Type: application/json' \
+			-d "{\"snapshot_id\":\"$$SID\"}"
+
+# ── Docker Compose (full stack) ───────────────────────────────────────────────
+# `make compose-*` targets bring up Temporal + MinIO + endoflife + detector,
+# and (when EMITTER_PATH points at a real directory) the emitter alongside via
+# Compose's `with-emitter` profile. EMITTER_PATH defaults to a sibling checkout
+# at ../version-guard-emitter; override if yours lives elsewhere:
+#   make compose-up EMITTER_PATH=/Users/me/code/my-emitter
+# Open-source users without an emitter checkout get a detector-only stack
+# automatically — same `make compose-up` / `make compose-e2e` commands.
+EMITTER_PATH      ?= ../version-guard-emitter
+COMPOSE_PROJECT   := version-guard
+COMPOSE_BASE      := EMITTER_PATH=$(EMITTER_PATH) docker compose -p $(COMPOSE_PROJECT)
+EMITTER_AVAILABLE := $(wildcard $(EMITTER_PATH))
+COMPOSE_PROFILE   := $(if $(EMITTER_AVAILABLE),--profile with-emitter,)
+
+.PHONY: compose-up
+compose-up: ## Bring up the stack (auto-includes emitter if EMITTER_PATH exists)
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@if [ -n "$(EMITTER_AVAILABLE)" ]; then \
+	  echo "🐳 Bringing up full stack (detector + emitter + Temporal + MinIO + endoflife)..."; \
+	else \
+	  echo "🐳 Bringing up detector-only stack (EMITTER_PATH=$(EMITTER_PATH) not found — set it to also exercise the /trigger-act webhook)..."; \
+	fi
+	@$(COMPOSE_BASE) $(COMPOSE_PROFILE) up --build -d
+	@if [ -n "$(EMITTER_AVAILABLE)" ]; then \
+	  echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT), emitter :8083 (host) → :8080 (container), Temporal UI http://localhost:8233"; \
+	else \
+	  echo "✅ Stack up. Detector :$(DETECTOR_ADMIN_PORT), Temporal UI http://localhost:8233. emitter webhook will log a non-fatal failure — snapshots still land in MinIO."; \
+	fi
+
+.PHONY: compose-down
+compose-down: ## Tear down the compose stack and remove volumes
+	@command -v docker >/dev/null 2>&1 || { echo "❌ docker not found"; exit 1; }
+	@$(COMPOSE_BASE) --profile with-emitter down -v --remove-orphans
+	@echo "✅ Stack torn down."
+
+.PHONY: compose-logs
+compose-logs: ## Tail logs from all compose services
+	@$(COMPOSE_BASE) $(COMPOSE_PROFILE) logs -f --tail=200
+
+.PHONY: compose-e2e
+compose-e2e: compose-up ## E2e: bring up the stack, fire /scan, tail logs (Ctrl+C to stop)
+	@echo "⏳ Waiting 10s for services to register workflows..."
+	@sleep 10
+	@echo "🚀 POST /scan (resource=$(WEBHOOK_E2E_RESOURCE))..."
+	@docker run --rm --network $(COMPOSE_PROJECT)_default $(CURL_DOCKER_IMAGE) \
+		-fsSi -X POST http://version-guard:8081/scan \
+			-H 'Content-Type: application/json' \
+			-d '{"resource_types":["$(WEBHOOK_E2E_RESOURCE)"]}' || true
+	@echo ""
+	@if [ -n "$(EMITTER_AVAILABLE)" ]; then \
+	  echo "✅ Scan triggered. Detector → /trigger-act webhook → emitter ActWorkflow. Tailing logs (Ctrl+C to stop; then \`make compose-down\` to clean up)."; \
+	else \
+	  echo "✅ Scan triggered (detector-only). Snapshot will land in MinIO; /trigger-act webhook will log a non-fatal failure. Tailing logs (Ctrl+C to stop; then \`make compose-down\` to clean up)."; \
+	fi
+	@$(COMPOSE_BASE) $(COMPOSE_PROFILE) logs -f
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 

@@ -22,6 +22,19 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
+      # Enables virtual-hosted-style bucket addressing (`<bucket>.minio`).
+      # Required because AWS SDK Go v2 (used by the emitter) defaults to
+      # virtual-hosted style and the emitter does not yet expose a
+      # `S3_ENDPOINT` flag that would let us force path-style at the SDK
+      # layer like the detector does.
+      MINIO_DOMAIN: minio
+    networks:
+      default:
+        aliases:
+          # Resolve `version-guard-snapshots.minio` → the MinIO container
+          # so virtual-hosted-style requests from the emitter land on the
+          # right host.
+          - version-guard-snapshots.minio
 
   minio-init:
     image: minio/mc:latest
@@ -70,6 +83,58 @@ services:
       SCHEDULE_CRON: ${SCHEDULE_CRON:-0 6 * * *}
       SCHEDULE_ID: ${SCHEDULE_ID:-version-guard-scan}
       SCHEDULE_JITTER: ${SCHEDULE_JITTER:-5m}
+      # emitter webhook: only meaningful when the `with-emitter` compose
+      # profile is active (the `emitter` service below). When the
+      # profile is off, the emitter service isn't built/started and the
+      # detector will fail to POST /trigger-act — Webhook failures are
+      # non-fatal so the snapshot still lands in MinIO.
+      EMITTER_WEBHOOK_URL: ${EMITTER_WEBHOOK_URL:-http://emitter:8080}
+      # Synthesize 1 fake resource per config when no Wiz creds are set,
+      # so the detector → snapshot path produces output without external
+      # CloudSec access. NEVER set this in production.
+      INVENTORY_FALLBACK: ${INVENTORY_FALLBACK:-mock}
     ports:
       - "8081:8081"
       - "9090:9090"
+
+  # Optional emitter service — opt in with `--profile with-emitter`.
+  # The build context defaults to the sibling `../version-guard-emitter`
+  # checkout; override with EMITTER_PATH for any other location, e.g.:
+  #   EMITTER_PATH=/path/to/your/emitter docker compose --profile with-emitter up --build
+  # Devs without the emitter source can leave the profile off and still
+  # exercise the detector + Temporal + MinIO + endoflife stack.
+  emitter:
+    profiles: ["with-emitter"]
+    build:
+      context: ${EMITTER_PATH:-../version-guard-emitter}
+      dockerfile: Dockerfile
+    depends_on:
+      temporal:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      TEMPORAL_ENDPOINT: temporal:7233
+      TEMPORAL_NAMESPACE: version-guard-dev
+      TEMPORAL_TASK_QUEUE: version-guard-act
+      ADMIN_PORT: "8080"
+      S3_BUCKET: version-guard-snapshots
+      S3_PREFIX: snapshots
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      # AWS SDK Go v2 honours AWS_ENDPOINT_URL_S3 for MinIO routing
+      # without code changes — the emitter doesn't expose its own
+      # S3_ENDPOINT flag yet.
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      # The bundled emitters/asr config in the emitter image requires
+      # ASR_ENDPOINT to be set or it refuses to start. We point it at a
+      # noop URL — the wire test only needs the emitter to receive the
+      # /trigger-act webhook and start ActWorkflow; downstream ASR
+      # submission will fail, which is expected and out of scope here.
+      ASR_ENDPOINT: ${ASR_ENDPOINT:-http://localhost:9999/noop}
+    ports:
+      # Host :8083 → container :8080 (host :8082 is already taken by the
+      # endoflife mock service).
+      - "8083:8080"

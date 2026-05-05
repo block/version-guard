@@ -14,10 +14,17 @@ import (
 )
 
 // Config holds configuration for the Temporal schedule.
+// Field order is tuned for govet fieldalignment: all string fields
+// before the slice keeps the pointer span minimal.
 type Config struct {
 	ScheduleID     string
 	CronExpression string
 	TaskQueue      string
+	// EmitterWebhookURL, when non-empty, is forwarded into every
+	// scheduled OrchestratorWorkflow run so it can fire the
+	// notify activity once the snapshot is persisted. Empty disables
+	// the webhook for scheduled runs.
+	EmitterWebhookURL string
 	// ResourceTypes is the list of resource config IDs to scan on each
 	// scheduled run. Sourced from the loaded YAML config at startup —
 	// empty is rejected by the orchestrator workflow because there is
@@ -72,7 +79,8 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 		Action: &client.ScheduleWorkflowAction{
 			Workflow: orchestrator.OrchestratorWorkflow,
 			Args: []interface{}{orchestrator.WorkflowInput{
-				ResourceTypes: cfg.ResourceTypes,
+				ResourceTypes:     cfg.ResourceTypes,
+				EmitterWebhookURL: cfg.EmitterWebhookURL,
 			}},
 			TaskQueue:                cfg.TaskQueue,
 			WorkflowExecutionTimeout: 2 * time.Hour,
@@ -91,30 +99,40 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 	}
 
 	handle := m.scheduleClient.GetHandle(ctx, cfg.ScheduleID)
+	desc, err := handle.Describe(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to describe existing schedule %q: %w", cfg.ScheduleID, err)
+	}
 
-	// Always refresh existing schedules with the current Spec AND Action
-	// (Args + TaskQueue) on every startup. The previous "skip when
-	// cron+jitter match" optimization was unsafe: it only diffed Spec
-	// and never touched Action.Args, so a schedule created on an older
-	// code revision (when the orchestrator carried a hardcoded
-	// fallback resource list) kept a now-stale ResourceTypes:null in
-	// its Args forever. After the orchestrator started rejecting empty
-	// ResourceTypes (ErrNoResourceTypes), every cron firing failed
-	// instantly with no log past "Starting orchestrator workflow".
+	// Check if anything observable has changed: spec (cron/jitter) or
+	// the workflow action's task queue / WorkflowInput. We must compare
+	// the action's WorkflowInput too — otherwise propagating a newly
+	// set EmitterWebhookURL (or a changed ResourceTypes list) would
+	// silently no-op on upgraded deployments where the schedule already
+	// exists with stale args.
+	existingSpec := desc.Schedule.Spec
+	if existingSpec == nil {
+		existingSpec = &client.ScheduleSpec{}
+	}
+	existingCrons := existingSpec.CronExpressions
+	specMatches := len(existingCrons) == 1 && existingCrons[0] == cfg.CronExpression && existingSpec.Jitter == cfg.Jitter
+	actionMatches := scheduleActionMatches(desc.Schedule.Action, &cfg)
+	if specMatches && actionMatches {
+		fmt.Printf("  Schedule %q already configured (cron: %s)\n", cfg.ScheduleID, cfg.CronExpression)
+		return nil
+	}
+
+	// Update the schedule with the new spec and action.
+	// We replace the entire Spec rather than mutating fields because Temporal
+	// parses CronExpressions into Calendars/StructuredCalendar server-side on
+	// create. On subsequent describes, the cron lives in Calendars and
+	// CronExpressions comes back empty — mutating CronExpressions alone would
+	// leave stale calendars in place, causing the schedule to fire on both
+	// the old and new cadences after every restart with a changed cron.
 	//
-	// Args are encoded as opaque payloads in the Temporal Schedule, so
-	// we cannot reliably diff them against cfg.ResourceTypes here.
-	// One Update RPC per pod startup is a trivial cost compared to the
-	// outage risk of silent arg drift; rebuild the schedule
-	// unconditionally and let Temporal handle the no-op case.
-	//
-	// We replace the entire Spec rather than mutating fields because
-	// Temporal parses CronExpressions into Calendars/StructuredCalendar
-	// server-side on create. On subsequent describes, the cron lives
-	// in Calendars and CronExpressions comes back empty — mutating
-	// CronExpressions alone would leave stale calendars in place,
-	// causing the schedule to fire on both the old and new cadences
-	// after every restart with a changed cron.
+	// We also rewrite the action's WorkflowInput so a newly-set
+	// EmitterWebhookURL (or any other field) reaches scheduled runs
+	// without manual schedule recreation.
 	err = handle.Update(ctx, client.ScheduleUpdateOptions{
 		DoUpdate: func(input client.ScheduleUpdateInput) (*client.ScheduleUpdate, error) {
 			input.Description.Schedule.Spec = &client.ScheduleSpec{
@@ -124,7 +142,8 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			if action, ok := input.Description.Schedule.Action.(*client.ScheduleWorkflowAction); ok {
 				action.TaskQueue = cfg.TaskQueue
 				action.Args = []interface{}{orchestrator.WorkflowInput{
-					ResourceTypes: cfg.ResourceTypes,
+					ResourceTypes:     cfg.ResourceTypes,
+					EmitterWebhookURL: cfg.EmitterWebhookURL,
 				}}
 			}
 			return &client.ScheduleUpdate{
@@ -136,11 +155,51 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("failed to update schedule %q: %w", cfg.ScheduleID, err)
 	}
 
-	fmt.Printf("  Schedule %q refreshed (cron: %s, resources: %d)\n",
-		cfg.ScheduleID, cfg.CronExpression, len(cfg.ResourceTypes))
+	fmt.Printf("  Schedule %q updated (cron: %s)\n", cfg.ScheduleID, cfg.CronExpression)
 	return nil
 }
 
 func isScheduleAlreadyRunning(err error) bool {
 	return errors.Is(err, temporal.ErrScheduleAlreadyRunning)
+}
+
+// scheduleActionMatches reports whether the existing schedule's
+// ScheduleWorkflowAction already carries the desired task queue and
+// WorkflowInput fields. Anything we don't recognize (e.g. a non-workflow
+// action, missing args) is treated as a mismatch so the update path
+// rewrites it canonically.
+func scheduleActionMatches(action client.ScheduleAction, cfg *Config) bool {
+	wfAction, ok := action.(*client.ScheduleWorkflowAction)
+	if !ok {
+		return false
+	}
+	if wfAction.TaskQueue != cfg.TaskQueue {
+		return false
+	}
+	if len(wfAction.Args) != 1 {
+		return false
+	}
+	existing, ok := wfAction.Args[0].(orchestrator.WorkflowInput)
+	if !ok {
+		return false
+	}
+	if existing.EmitterWebhookURL != cfg.EmitterWebhookURL {
+		return false
+	}
+	if !resourceTypesEqual(existing.ResourceTypes, cfg.ResourceTypes) {
+		return false
+	}
+	return true
+}
+
+func resourceTypesEqual(a, b []types.ResourceType) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

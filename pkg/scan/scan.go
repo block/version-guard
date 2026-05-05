@@ -35,6 +35,7 @@ type Starter interface {
 type Trigger struct {
 	starter              Starter
 	taskQueue            string
+	emitterWebhookURL    string
 	defaultResourceTypes []types.ResourceType
 }
 
@@ -43,6 +44,10 @@ type Trigger struct {
 // defaultResourceTypes is the list used when the caller does not specify
 // any (e.g. a full-fleet scan via empty HTTP body); supply it from the
 // loaded YAML config so adding a resource is a YAML-only change.
+//
+// Optional configuration (e.g. the emitter webhook URL) is set via
+// functional options like WithEmitterWebhookURL so the constructor stays
+// minimal and both real and test entry points share the same shape.
 func NewTrigger(c client.Client, taskQueue string, defaultResourceTypes []types.ResourceType) *Trigger {
 	return &Trigger{starter: c, taskQueue: taskQueue, defaultResourceTypes: defaultResourceTypes}
 }
@@ -52,6 +57,15 @@ func NewTrigger(c client.Client, taskQueue string, defaultResourceTypes []types.
 // supplies an explicit list.
 func NewTriggerWithStarter(s Starter, taskQueue string, defaultResourceTypes []types.ResourceType) *Trigger {
 	return &Trigger{starter: s, taskQueue: taskQueue, defaultResourceTypes: defaultResourceTypes}
+}
+
+// WithEmitterWebhookURL returns a copy of the trigger configured to forward
+// the given URL to every started OrchestratorWorkflow. The notify
+// activity in the orchestrator is gated on this field being non-empty.
+func (t *Trigger) WithEmitterWebhookURL(url string) *Trigger {
+	clone := *t
+	clone.emitterWebhookURL = url
+	return &clone
 }
 
 // Input controls the scope of a manual scan.
@@ -105,8 +119,9 @@ func (t *Trigger) Run(ctx context.Context, in Input) (Result, error) {
 	}
 
 	run, err := t.starter.ExecuteWorkflow(ctx, opts, orchestrator.OrchestratorWorkflow, orchestrator.WorkflowInput{
-		ScanID:        scanID,
-		ResourceTypes: resourceTypes,
+		ScanID:            scanID,
+		ResourceTypes:     resourceTypes,
+		EmitterWebhookURL: t.emitterWebhookURL,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("scan: execute workflow: %w", err)

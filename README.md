@@ -176,6 +176,22 @@ Temporal SDK metrics are enabled by default and exposed at
 http://localhost:9090/metrics. Set `TEMPORAL_METRICS_ENABLED=false` to disable
 them, or set `TEMPORAL_METRICS_LISTEN_ADDRESS` to use a different address.
 
+#### End-to-end with `make compose-*`
+
+The same commands work for everyone — they auto-detect whether a webhook-style emitter is present and adjust accordingly:
+
+```bash
+make compose-e2e    # build → up → POST /scan → tail logs
+make compose-down   # tear everything down
+```
+
+- **Open-source users (no emitter):** detector + Temporal + MinIO + endoflife come up. The orchestrator still posts to `EMITTER_WEBHOOK_URL`; with no listener it logs a single non-fatal failure and the snapshot still lands in MinIO. Use this to verify the DETECT → STORE pipeline.
+- **Block (or anyone with a webhook emitter):** drop a sibling checkout at `../version-guard-emitter`, or set `EMITTER_PATH=/path/to/your/emitter`, and the same `make compose-e2e` brings up the emitter alongside via Compose's [`with-emitter` profile](https://docs.docker.com/compose/profiles/) and exercises the full DETECT → STORE → ACT flow.
+
+##### Emitter integration model
+
+Block runs an internal companion service that consumes snapshots and posts findings to its security tooling (private repo, not publicly available). The orchestrator's optional emitter webhook (`EMITTER_WEBHOOK_URL`) is the link between detector and that service. **Most open-source users don't need it** — implement an in-process emitter against the `pkg/emitters` interfaces instead (see [Extending Version Guard](#-extending-version-guard)). The webhook path is for users who prefer to keep their emitter in a separate process or repository.
+
 ### Run Locally (manual)
 
 If you prefer running components individually:
@@ -317,6 +333,9 @@ Version Guard is configured via environment variables or CLI flags:
 | `SCHEDULE_CRON` | Cron expression for scan schedule | `0 6 * * *` (daily 06:00 UTC) |
 | `SCHEDULE_ID` | Temporal schedule ID (stable across restarts) | `version-guard-scan` |
 | `SCHEDULE_JITTER` | Random jitter to prevent thundering herd | `5m` |
+| `SNAPSHOT_STORE` | Snapshot backend: `s3` or `memory` (in-process; for laptop dev / CI smoke tests) | `s3` |
+| `INVENTORY_FALLBACK` | When Wiz creds are missing: empty (skip resource and fail-fast) or `mock` (synthesize 1 fake resource per config — dev only, never set in production) | _(empty)_ |
+| `EMITTER_WEBHOOK_URL` | Optional. Base URL of an out-of-process emitter that exposes `POST /trigger-act`. When set, the orchestrator workflow notifies it after each snapshot is persisted. Empty disables the webhook — Version Guard still ships findings via in-process emitters and S3. See [Extending Version Guard](#-extending-version-guard) below. | _(empty)_ |
 | `--verbose` / `-v` | Enable debug-level logging | `false` |
 
 **Custom Resource Catalog:**
@@ -450,7 +469,26 @@ type DashboardEmitter interface {
 - `pkg/emitters/examples/logging_emitter.go` - Logs findings to stdout (included)
 - **Your custom emitter** - Send findings to Jira, ServiceNow, Slack, PagerDuty, etc.
 
-### 2. Consuming S3 Snapshots
+### 2. Out-of-process Emitter via Webhook (Optional)
+
+For users who already run a separate service that consumes snapshots (e.g. a long-running worker that writes to a different system), Version Guard can **notify** that service every time a snapshot is persisted, instead of (or in addition to) calling in-process emitters. Set `EMITTER_WEBHOOK_URL=https://your-emitter.example.com` and the orchestrator workflow will:
+
+1. POST `{"snapshot_id": "<id>"}` to `<EMITTER_WEBHOOK_URL>/trigger-act`.
+2. Expect a `2xx` response (the body is logged but not required to follow any schema).
+3. Treat any failure as **non-fatal** — the snapshot is already durable in your snapshot store, and Temporal's retry policy will handle transient errors.
+
+**You build the receiver.** Any HTTP server that handles `POST /trigger-act` works. Block runs an internal companion service for this (private repo, not publicly available) — for OSS, a 30-line Go/Python/Node handler that starts your own workflow / job is enough. Replying with `2xx` is the only contract.
+
+**When to choose this vs. in-process emitters:**
+
+| You want… | Use |
+|---|---|
+| A pluggable callback inside the detector pod (logging, Slack, Jira, simple webhooks) | In-process emitter via `pkg/emitters` (see §1 above) |
+| A separate long-running service with its own deployment cadence, scaling, or runtime | Out-of-process webhook emitter |
+| Both | Set `EMITTER_WEBHOOK_URL` AND register an in-process emitter — they run independently |
+| Neither (just consume snapshots out-of-band) | Skip both; read the JSON from S3 (see §3 below) |
+
+### 3. Consuming S3 Snapshots
 
 Snapshots are stored as JSON in S3:
 ```
@@ -486,7 +524,7 @@ s3://your-bucket/snapshots/latest.json
 **Consume snapshots with:**
 - AWS Lambda triggered on S3 events
 - Scheduled cron job reading `latest.json`
-- Custom Temporal workflow (implement `Stage 3: ACT`)
+- Custom Temporal workflow (implement your own follow-up workflow)
 
 ## 📖 Documentation
 

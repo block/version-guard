@@ -212,6 +212,8 @@ func (c *ScanStartCmd) Run(ctx *Context) error {
 	// --resource-type explicitly. An empty list propagates to the
 	// orchestrator, which rejects it with ErrNoResourceTypes so the
 	// caller gets an immediate, descriptive failure.
+	// CLI-triggered runs do not chain to the emitter webhook — operators
+	// using the CLI typically just want to verify the detector path.
 	trigger := scan.NewTrigger(temporalClient, ctx.TemporalTaskQueue, nil)
 	res, err := trigger.Run(context.Background(), scan.Input{
 		ScanID:        c.ScanID,
