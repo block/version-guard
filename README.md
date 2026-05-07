@@ -1,7 +1,5 @@
 # Version Guard
 
-> ⚠️ **Work in Progress / Experimental** — Version Guard is under active development. APIs, configuration formats, and behavior may change without notice. Use at your own risk in production environments.
-
 **Version Guard** is an open-source cloud infrastructure version monitoring system that continuously scans cloud resources (databases, caches, compute) to detect version drift and compliance issues.
 
 ## 🎯 Purpose
