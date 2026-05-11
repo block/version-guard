@@ -100,12 +100,12 @@ Version Guard uses a **config-driven approach** - resources are defined in `pkg/
 |----------|-----------|------------|--------|
 | **EKS** (Kubernetes) | Wiz | [amazon-eks](https://endoflife.date/amazon-eks) | ✅ Production tested |
 | **ElastiCache** (Redis/Valkey/Memcached) | Wiz | [amazon-elasticache-redis](https://endoflife.date/amazon-elasticache-redis), [valkey](https://endoflife.date/valkey) | ✅ Production tested |
-| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ⚠️ Production tested, EOL data pending [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) |
-| **Aurora PostgreSQL** | Wiz | [amazon-aurora-postgresql](https://endoflife.date/amazon-aurora-postgresql) | 🔜 Config ready, needs Wiz report ID |
+| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ⚠️ Production tested via the [`deploy/endoflife-override`](./deploy/endoflife-override/) shim while [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) is still open upstream |
+| **Aurora PostgreSQL** | Wiz | [amazon-aurora-postgresql](https://endoflife.date/amazon-aurora-postgresql) | ✅ Production tested |
 | **OpenSearch** | Wiz | [amazon-opensearch](https://endoflife.date/amazon-opensearch), [elasticsearch](https://endoflife.date/elasticsearch) | ✅ Production tested |
-| **RDS MySQL** | — | [amazon-rds-mysql](https://endoflife.date/amazon-rds-mysql) | 📋 Planned (add to config) |
-| **RDS PostgreSQL** | — | [amazon-rds-postgresql](https://endoflife.date/amazon-rds-postgresql) | 📋 Planned (add to config) |
-| **Lambda** | — | [aws-lambda](https://endoflife.date/aws-lambda) | 📋 Planned (add to config) |
+| **RDS MySQL** | Wiz | [amazon-rds-mysql](https://endoflife.date/amazon-rds-mysql) | ✅ Production tested |
+| **RDS PostgreSQL** | Wiz | [amazon-rds-postgresql](https://endoflife.date/amazon-rds-postgresql) | ✅ Production tested |
+| **Lambda** | Wiz | [aws-lambda](https://endoflife.date/aws-lambda) | ✅ Production tested |
 
 **Adding a new resource type requires:**
 1. A Wiz saved report for the resource type
@@ -152,7 +152,9 @@ export WIZ_REPORT_IDS='{
   "eks":"your-eks-report-id",
   "elasticache-redis":"your-elasticache-report-id",
   "elasticache-valkey":"your-elasticache-report-id",
-  "elasticache-memcached":"your-elasticache-report-id"
+  "elasticache-memcached":"your-elasticache-report-id",
+  "opensearch":"your-opensearch-report-id",
+  "lambda":"your-lambda-report-id"
 }'
 docker compose up --build
 ```
@@ -208,7 +210,7 @@ make dev
 # Or with real Wiz inventory (requires credentials)
 export WIZ_CLIENT_ID_SECRET="your-client-id"
 export WIZ_CLIENT_SECRET_SECRET="your-client-secret"
-export WIZ_REPORT_IDS='{"aurora-mysql":"report-id","eks":"report-id","elasticache-redis":"report-id","elasticache-valkey":"report-id","elasticache-memcached":"report-id"}'
+export WIZ_REPORT_IDS='{"aurora-mysql":"report-id","eks":"report-id","elasticache-redis":"report-id","elasticache-valkey":"report-id","elasticache-memcached":"report-id","opensearch":"report-id","lambda":"report-id"}'
 make dev
 ```
 
@@ -318,6 +320,9 @@ Version Guard is configured via environment variables or CLI flags:
 |----------|-------------|---------|
 | `TEMPORAL_ENDPOINT` | Temporal server address | `localhost:7233` |
 | `TEMPORAL_NAMESPACE` | Temporal namespace | `version-guard-dev` |
+| `TEMPORAL_TASK_QUEUE` | Temporal task queue used by the worker | `version-guard-detection` |
+| `TEMPORAL_METRICS_ENABLED` | Enable the Temporal Go SDK Prometheus/OpenMetrics endpoint | `true` |
+| `TEMPORAL_METRICS_LISTEN_ADDRESS` | Prometheus listen address for Temporal SDK metrics | `0.0.0.0:9090` |
 | `HTTP_PORT` | HTTP admin port (`POST /scan`) | `8081` |
 | `S3_BUCKET` | S3 bucket for snapshots | `version-guard-snapshots` |
 | `AWS_REGION` | AWS region (for S3 snapshots) | `us-west-2` |
@@ -395,7 +400,9 @@ export WIZ_REPORT_IDS='{
   "eks": "your-eks-report-id",
   "elasticache-redis": "your-elasticache-report-id",
   "elasticache-valkey": "your-elasticache-report-id",
-  "elasticache-memcached": "your-elasticache-report-id"
+  "elasticache-memcached": "your-elasticache-report-id",
+  "opensearch": "your-opensearch-report-id",
+  "lambda": "your-lambda-report-id"
 }'
 ```
 
@@ -495,17 +502,34 @@ s3://your-bucket/snapshots/latest.json
 ```
 
 **Snapshot Schema:**
+
+Snapshots are produced via Go's `encoding/json` defaults. Top-level fields on
+`Snapshot` and `SnapshotSummary` carry explicit `snake_case` tags (see
+[pkg/types/snapshot.go](./pkg/types/snapshot.go)); per-`Finding` fields have no
+JSON tags and therefore serialize as PascalCase. The `findings_by_type` map is
+keyed by the resource config ID (e.g. `aurora-mysql`, `eks`), not by the
+`ResourceType` constants used in tests.
+
 ```json
 {
   "snapshot_id": "scan-2026-04-09-123456",
   "version": "v3",
   "generated_at": "2026-04-09T12:34:56Z",
+  "scan_start_time": "2026-04-09T12:00:00Z",
+  "scan_end_time": "2026-04-09T12:34:56Z",
+  "scan_duration_sec": 2096,
   "findings_by_type": {
-    "aurora": [
+    "aurora-mysql": [
       {
-        "resource_id": "db-cluster-1",
-        "status": "red",
-        "message": "Running deprecated version 13.3 (EOL: 2025-03-01)"
+        "ResourceID": "db-cluster-1",
+        "ResourceType": "aurora-mysql",
+        "CloudProvider": "aws",
+        "CurrentVersion": "5.6.10a",
+        "Engine": "aurora-mysql",
+        "Status": "RED",
+        "Message": "Running deprecated version 5.6.10a (EOL: 2024-02-29)",
+        "DetectedAt": "2026-04-09T12:34:56Z",
+        "UpdatedAt": "2026-04-09T12:34:56Z"
       }
     ]
   },
@@ -514,6 +538,7 @@ s3://your-bucket/snapshots/latest.json
     "red_count": 12,
     "yellow_count": 35,
     "green_count": 103,
+    "unknown_count": 0,
     "compliance_percentage": 68.7
   }
 }

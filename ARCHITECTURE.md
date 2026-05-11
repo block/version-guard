@@ -2,16 +2,20 @@
 
 ## 📊 Implementation Status
 
-**Production-Tested Resources** (config-driven, zero code changes needed):
-- ✅ **Aurora MySQL** - Production tested (config ready, awaiting endoflife.date data)
-- ✅ **Aurora PostgreSQL** - Config ready, requires separate Wiz report ID
-- ✅ **EKS** - Production tested (policy classification working)
-- ✅ **ElastiCache (Redis/Valkey/Memcached)** - Production tested
+**Production-Tested Resources** (config-driven, zero code changes needed; all
+ten ship in `pkg/config/defaults/resources.yaml` and run live at Block):
 
-**Planned Resources** (add ~15 lines to `pkg/config/defaults/resources.yaml`):
-- ✅ **OpenSearch** - Production tested (auto-detects legacy Elasticsearch versions)
-- 📋 RDS MySQL/PostgreSQL
-- 📋 Lambda runtimes
+- ✅ **Aurora MySQL** — production tested via the
+  [`deploy/endoflife-override`](./deploy/endoflife-override/) shim while
+  [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534)
+  is still open upstream
+- ✅ **Aurora PostgreSQL**
+- ✅ **EKS** — policy classification working (standard / extended support split)
+- ✅ **ElastiCache (Redis / Valkey / Memcached)**
+- ✅ **OpenSearch** — auto-detects legacy Elasticsearch versions
+- ✅ **RDS MySQL**
+- ✅ **RDS PostgreSQL**
+- ✅ **Lambda runtimes** — JSON-extracted from `graphEntity.properties.runtime`
 
 ---
 
@@ -35,7 +39,7 @@
 **Vision:** Version Guard is a **cloud-agnostic** version drift detection platform supporting multiple cloud providers.
 
 ### Phase 1 (Implemented): AWS
-- **Resources**: ✅ Aurora MySQL (production tested), ✅ Aurora PostgreSQL (config ready), ✅ EKS (production tested), ✅ ElastiCache (production tested), ✅ OpenSearch (production tested), 📋 RDS, 📋 Lambda
+- **Resources** (all production tested at Block): ✅ Aurora MySQL, ✅ Aurora PostgreSQL, ✅ EKS, ✅ ElastiCache (Redis/Valkey/Memcached), ✅ OpenSearch, ✅ RDS MySQL, ✅ RDS PostgreSQL, ✅ Lambda
 - **Inventory**: Wiz saved reports (primary) + Custom sources (extensible)
 - **EOL Data**: endoflife.date API (404 graceful degradation for products not yet listed)
 
@@ -180,28 +184,29 @@ export WIZ_REPORT_IDS='{
 ```
 Version-Guard/
 ├── cmd/
-│   ├── server/main.go                    # Server with Temporal worker + HTTP admin
+│   ├── server/main.go                    # Server: Temporal worker + HTTP admin
 │   └── cli/main.go                       # CLI tool for operators
-│
-├── config/
-│   └── resources.yaml                    # Config-driven resource definitions
 │
 ├── pkg/
 │   ├── types/
 │   │   ├── resource.go                   # Core types: Resource, Finding
-│   │   ├── status.go                     # Status enum (Red/Yellow/Green)
+│   │   ├── snapshot.go                   # Snapshot + SnapshotSummary types
+│   │   ├── status.go                     # Status enum (Red/Yellow/Green/Unknown)
 │   │   └── cloud.go                      # CloudProvider enum
 │   │
 │   ├── config/
 │   │   ├── types.go                      # Configuration schema
-│   │   └── loader.go                     # Config loader and validator
+│   │   ├── loader.go                     # Config loader and validator
+│   │   ├── transforms.go                 # Transforms DSL (see TRANSFORMS.md)
+│   │   └── defaults/resources.yaml       # Embedded default resource catalog
 │   │
 │   ├── inventory/
 │   │   ├── inventory.go                  # InventorySource interface
 │   │   ├── wiz/                          # Wiz implementation (multi-cloud)
 │   │   │   ├── generic.go                # Generic config-driven inventory source
-│   │   │   ├── client.go                 # Wiz HTTP client
-│   │   │   └── helpers.go                # CSV parsing, tag extraction
+│   │   │   ├── client.go / http_client.go  # Wiz API + HTTP layer
+│   │   │   ├── helpers.go / tags.go      # CSV parsing, tag extraction
+│   │   │   └── transforms.go             # Transforms applier (uses pkg/config DSL)
 │   │   └── mock/                         # Mock for tests
 │   │
 │   ├── eol/
@@ -209,8 +214,8 @@ Version-Guard/
 │   │   ├── endoflife/
 │   │   │   ├── client.go                 # endoflife.date HTTP client
 │   │   │   ├── provider.go               # endoflife.date provider
-│   │   │   ├── adapters.go               # Schema adapters (standard, EKS)
-│   │   │   └── ADAPTERS.md               # Why EKS needs its own adapter (gotcha doc)
+│   │   │   ├── adapters.go               # Schema adapters (standard, declarative)
+│   │   │   └── ADAPTERS.md               # Lifecycle schema reference (standard vs declarative)
 │   │   └── mock/                         # Mock for tests
 │   │
 │   ├── policy/
@@ -219,12 +224,12 @@ Version-Guard/
 │   │
 │   ├── store/
 │   │   ├── store.go                      # Store interface
-│   │   └── memory/
-│   │       └── store.go                  # In-memory implementation
+│   │   └── memory/store.go               # In-memory implementation
 │   │
 │   ├── snapshot/
 │   │   ├── builder.go                    # Snapshot JSON builder
-│   │   └── store.go                      # S3 storage operations
+│   │   ├── store.go                      # S3 snapshot store
+│   │   └── memory_store.go               # In-process snapshot store (laptop / CI)
 │   │
 │   ├── workflow/
 │   │   ├── detection/
@@ -232,22 +237,23 @@ Version-Guard/
 │   │   │   └── activities.go             # Inventory, EOL, detection activities
 │   │   └── orchestrator/
 │   │       ├── workflow.go               # Main orchestrator (fan-out)
-│   │       └── activities.go             # Snapshot storage activity
+│   │       ├── activities.go             # Snapshot storage activity
+│   │       └── notify.go                 # Optional out-of-process emitter webhook
 │   │
 │   ├── scan/
-│   │   ├── scan.go                       # Scan trigger (HTTP + CLI)
+│   │   ├── scan.go                       # Scan trigger (shared by HTTP + CLI)
 │   │   └── handler.go                    # HTTP handler for POST /scan
+│   │
+│   ├── schedule/schedule.go              # Temporal Schedule create-or-update wiring
 │   │
 │   ├── emitters/
 │   │   ├── emitters.go                   # Emitter interfaces (for custom implementations)
-│   │   └── examples/
-│   │       └── logging_emitter.go        # Example logging emitter
+│   │   └── examples/logging_emitter.go   # Reference logging emitter
 │   │
-│   └── registry/
-│       └── client.go                     # Service attribution interface
+│   └── registry/client.go                # Service attribution interface (optional)
 │
-└── docs/
-    └── examples/                         # Usage examples
+├── charts/version-guard/                 # Helm chart
+└── deploy/                               # Dockerfile + endoflife.date override shim
 ```
 
 ---
@@ -466,6 +472,14 @@ s3://your-bucket/snapshots/
 
 ### Snapshot Schema
 
+Snapshots are produced via Go's `encoding/json` defaults. Top-level fields on
+`Snapshot` and `SnapshotSummary` carry explicit `snake_case` JSON tags
+(see [pkg/types/snapshot.go](./pkg/types/snapshot.go)); per-`Finding` fields
+have no JSON tags and therefore serialize as PascalCase. The `findings_by_type`
+map is keyed by the resource **config ID** (e.g. `aurora-mysql`, `eks`,
+`elasticache-redis`) — the uppercase `ResourceType` constants in
+`pkg/types/resource.go` are test fixtures only.
+
 ```json
 {
   "snapshot_id": "scan-2026-04-09-123456",
@@ -473,15 +487,17 @@ s3://your-bucket/snapshots/
   "generated_at": "2026-04-09T12:34:56Z",
   "scan_start_time": "2026-04-09T12:00:00Z",
   "scan_end_time": "2026-04-09T12:34:56Z",
+  "scan_duration_sec": 2096,
   "findings_by_type": {
-    "AURORA": [...],
-    "EKS": [...]
+    "aurora-mysql": [{"ResourceID": "...", "Status": "RED", "Message": "..."}],
+    "eks":          [{"ResourceID": "...", "Status": "YELLOW", "Message": "..."}]
   },
   "summary": {
     "total_resources": 150,
     "red_count": 12,
     "yellow_count": 35,
     "green_count": 103,
+    "unknown_count": 0,
     "compliance_percentage": 68.7,
     "by_service": {...},
     "by_cloud_provider": {...}
@@ -500,8 +516,10 @@ def handler(event, context):
     data = json.loads(snapshot['Body'].read())
 
     # Send to your issue tracker, dashboard, etc.
-    for finding in data['findings_by_type']['AURORA']:
-        if finding['status'] == 'RED':
+    # findings_by_type is keyed by resource config ID; Finding fields are
+    # PascalCase (no JSON tags on pkg/types.Finding).
+    for finding in data['findings_by_type'].get('aurora-mysql', []):
+        if finding['Status'] == 'RED':
             create_jira_ticket(finding)
 ```
 

@@ -6,7 +6,7 @@ AI agent skills automate complex workflows in Version Guard, enabling any AI age
 
 ### What are AI Skills?
 
-AI skills are structured instruction sets that teach AI agents how to perform specific tasks autonomously. They follow the [Agent Skills standard](https://github.com/agent-skills/specification) with:
+AI skills are structured instruction sets that teach AI agents how to perform specific tasks autonomously. They follow the conventions established by [Anthropic's Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) and adopted by Amp / Claude Code / Goose:
 
 - **YAML Frontmatter**: Metadata (name, description, version, status)
 - **Tool Allowlist**: Explicit list of permitted operations
@@ -113,7 +113,8 @@ goose "Add OpenSearch to Version Guard"
 
 ### For Amp
 
-Amp auto-discovers skills from the project's directory structure.
+Amp auto-discovers skills from the project's `skills/` directory and surfaces
+them in the system prompt for each thread opened in this repo.
 
 **Setup:**
 ```bash
@@ -121,11 +122,12 @@ Amp auto-discovers skills from the project's directory structure.
 git clone https://github.com/block/Version-Guard.git
 cd Version-Guard
 
-# Verify skill exists
+# Verify the skill exists
 ls skills/add-version-guard-resource/SKILL.md
 
-# Scan for skills (optional)
-amp scan skills
+# (Optional) inspect what Amp sees / install additional skills
+amp skill list
+amp skill info add-version-guard-resource
 ```
 
 **Verification:**
@@ -161,136 +163,59 @@ cp -r skills/add-version-guard-resource ~/.config/your-agent/skills/
 
 ## Usage Examples
 
-### Example 1: Adding Amazon OpenSearch
+The skill produces YAML that conforms to the schema in
+[pkg/config/types.go](pkg/config/types.go) — the real fields are
+`id` / `type` / `cloud_provider` / `inventory.{source, native_type_pattern,
+required_mappings, field_mappings}` / `transforms` / `eol.{provider, product,
+schema, lifecycle}`. Wiz **report IDs are not in the YAML**; they live in the
+`WIZ_REPORT_IDS` JSON env var, keyed by the resource `id`. Reshaping
+inventory columns (extracting from JSON, stripping prefixes, normalizing
+engine names) is declared in the `transforms` block — see
+[TRANSFORMS.md](TRANSFORMS.md).
 
-**Request:**
-```
-Use the add-version-guard-resource skill to add OpenSearch support
-```
+Reference outputs the skill produces for each canonical shape live alongside
+it under
+[skills/add-version-guard-resource/examples/](skills/add-version-guard-resource/examples/).
 
-**What the AI agent does:**
+### Example 1: OpenSearch — `strip_prefixes` + `from_version_major`
 
-1. **Validates EOL data** - Queries endoflife.date API:
-   ```
-   curl https://endoflife.date/api/opensearch.json
-   ```
+**Request:** `Use the add-version-guard-resource skill to add OpenSearch support`
 
-2. **Gathers inputs** - Asks for:
-   - Resource ID: `opensearch`
-   - Display name: `OpenSearch`
-   - Wiz report ID: `wiz#report#abc123`
+The skill validates EOL coverage on `amazon-opensearch` and `elasticsearch`,
+auto-detects the Wiz `versionDetails.version` column shape (`OpenSearch_2.13`,
+`Elasticsearch_7.10`), and generates a resource block that strips the prefix
+and derives the engine from the major version. The final YAML matches what
+ships in [pkg/config/defaults/resources.yaml](pkg/config/defaults/resources.yaml)
+under `id: opensearch`.
 
-3. **Detects schema** - Examines existing Wiz fixtures:
-   ```
-   pkg/inventory/wiz/testdata/elasticache-redis.csv
-   ```
+**Time saved**: ~30–45 minutes → ~2–3 minutes.
 
-4. **Checks adapters** - Verifies if EOL data needs custom parsing
+### Example 2: Aurora PostgreSQL — `substring_lookup` (engine canonicalization)
 
-5. **Generates config** - Adds to `pkg/config/defaults/resources.yaml`:
-   ```yaml
-   - id: opensearch
-     name: OpenSearch
-     wiz_report_id: "wiz#report#abc123"
-     eol_product: opensearch
-     version_field: EngineVersion
-     name_field: ClusterName
-     schema_type: standard
-   ```
+**Request:** `Add Aurora PostgreSQL to Version Guard`
 
-6. **Runs tests** - Executes:
-   ```bash
-   go test ./pkg/config/...
-   go test ./pkg/inventory/wiz/...
-   go test ./pkg/workflow/detection/...
-   ```
+Aurora's `typeFields.kind` column says `AuroraPostgreSQL`, but
+endoflife.date keys cycles by `aurora-postgresql`. The skill emits a
+`substring_lookup` transform to canonicalize the engine — **no Go-side EOL
+adapter required**, because the standard endoflife.date schema already covers
+the lifecycle shape. See
+[skills/add-version-guard-resource/examples/aurora-pg.yaml](skills/add-version-guard-resource/examples/aurora-pg.yaml).
 
-7. **Creates commit**:
-   ```
-   Add OpenSearch resource support
+**Time saved**: ~30–60 minutes → ~2–3 minutes.
 
-   - Added OpenSearch to pkg/config/defaults/resources.yaml
-   - EOL product: opensearch
-   - Wiz report: wiz#report#abc123
-   - Uses standard schema (EngineVersion, ClusterName)
-   ```
+### Example 3: EKS — `default_if_empty` + declarative lifecycle
 
-**Time saved**: ~30-45 minutes of manual work reduced to 2-3 minutes
+**Request:** `Enable EKS detection in Version Guard`
 
----
+EKS reports have no engine column (the engine is implicitly `eks`) and use a
+non-standard endoflife.date lifecycle that splits standard vs. extended
+support. The skill produces a `default_if_empty` engine transform plus an
+`eol.schema: declarative` block with a YAML `lifecycle` mapping the
+upstream `eol` and `extendedSupport` fields onto Version Guard's
+deprecation / extended-support windows. See
+[skills/add-version-guard-resource/examples/eks.yaml](skills/add-version-guard-resource/examples/eks.yaml).
 
-### Example 2: Adding Amazon Aurora PostgreSQL
-
-**Request:**
-```
-Add Aurora PostgreSQL to Version Guard
-```
-
-**What's different:**
-
-Aurora uses a **non-standard schema** with separate major/minor version fields:
-- `EngineVersion` = `16.3`
-- `EngineMajorVersion` = `16`
-
-The skill detects this by examining existing Aurora MySQL fixtures and prompts:
-```
-Aurora uses non-standard schema with EngineMajorVersion.
-Should we use the standard version_field or custom extraction?
-
-Options:
-1. Use EngineVersion (standard) - recommended
-2. Use custom extraction with EngineMajorVersion
-```
-
-If you choose option 1, the generated config uses:
-```yaml
-version_field: EngineVersion  # Uses 16.3 format
-```
-
-The skill also detects that Aurora PostgreSQL needs a custom EOL adapter:
-```
-endoflife.date uses product ID "amazon-rds-postgresql"
-but Wiz data contains "aurora-postgresql".
-
-Created adapter in pkg/eol/endoflife/adapters.go:
-- Handles "aurora-postgresql" → "amazon-rds-postgresql" mapping
-```
-
-**Time saved**: ~1-2 hours (including schema analysis and adapter creation)
-
----
-
-### Example 3: Adding EKS (Kubernetes)
-
-**Request:**
-```
-Enable EKS detection in Version Guard
-```
-
-**What's different:**
-
-EKS uses a completely different Wiz schema (not AWS RDS):
-- Version field: `K8sVersion` (not `EngineVersion`)
-- Name field: `Name` (not `ClusterName`)
-
-The skill auto-detects this by examining `pkg/inventory/wiz/testdata/eks.csv`:
-```csv
-Name,K8sVersion,Region
-my-eks-cluster,1.28,us-east-1
-```
-
-Generated configuration:
-```yaml
-- id: eks
-  name: Amazon EKS
-  wiz_report_id: "wiz#report#eks123"
-  eol_product: amazon-eks
-  version_field: K8sVersion
-  name_field: Name
-  schema_type: non_standard
-```
-
-**Time saved**: ~45-60 minutes (including schema investigation)
+**Time saved**: ~45–60 minutes → ~2–3 minutes.
 
 ---
 
@@ -307,19 +232,25 @@ mkdir -p skills/your-skill-name/references
 
 ### 2. Create SKILL.md
 
-**Required structure:**
+**Required structure** (matches the
+[`add-version-guard-resource` skill](skills/add-version-guard-resource/SKILL.md)):
+
 ```markdown
 ---
 name: your-skill-name
 description: Brief description of what the skill does
-version: 1.0.0
-status: beta
-tool_allowlist:
+roles: []
+metadata:
+  version: "1.0.0"
+  status: beta
+user-invocable: true
+disable-model-invocation: false
+allowed-tools:
   - Read
   - Write
   - Edit
   - Bash(command_pattern:*)
-  - WebFetch(domain:example.com)
+  - WebFetch
 ---
 
 # Your Skill Name
@@ -448,9 +379,11 @@ test -f pkg/workflow/detection/activities.go && echo "✅ Detection activities e
 ```
 
 **Solutions:**
-- Implement Version Guard Phase 1 (generic infrastructure) first
-- Skills cannot work without the foundation in place
-- See [config-driven approach documentation](scratch/config-driven-approach/)
+- Make sure you're on a clean checkout of `main` so the generic
+  infrastructure (config loader, generic Wiz inventory source, detection
+  workflow) is present.
+- Skills cannot work without that foundation — see
+  [ARCHITECTURE.md](ARCHITECTURE.md) for the component layout.
 
 ---
 
@@ -493,19 +426,26 @@ go test ./pkg/workflow/detection/ -v
 
 **Common Issues:**
 
-1. **Wiz report ID incorrect**
-   - Verify report ID in `pkg/config/defaults/resources.yaml`
-   - Check that Wiz report exists and is accessible
+1. **Wiz report ID incorrect or missing**
+   - Wiz report IDs live in the `WIZ_REPORT_IDS` JSON env var (or
+     `.env` for docker-compose), keyed by the resource `id`. They are
+     **not** in `resources.yaml`.
+   - Confirm the report exists in Wiz and your credentials can access it.
 
 2. **EOL product mismatch**
-   - Confirm product exists on endoflife.date
-   - Check for custom adapter requirements
+   - Confirm `eol.product` exists on endoflife.date.
+   - If the product has non-standard lifecycle semantics, switch
+     `eol.schema` to `declarative` and supply an `eol.lifecycle` block
+     (see [pkg/eol/endoflife/ADAPTERS.md](pkg/eol/endoflife/ADAPTERS.md)).
 
-3. **Schema detection wrong**
-   - Manually verify Wiz CSV column names
-   - Update `version_field` or `name_field` if needed
+3. **Wrong inventory column mapping**
+   - Cross-check against an existing fixture under
+     `pkg/inventory/wiz/testdata/` to confirm Wiz column names.
+   - Adjust `inventory.required_mappings` / `inventory.field_mappings`,
+     or add a `transforms` block (see [TRANSFORMS.md](TRANSFORMS.md)) if
+     the raw column needs reshaping.
 
-**Solution**: Review generated configuration and adjust as needed.
+**Solution**: Review the generated configuration and adjust as needed.
 
 ---
 
@@ -602,7 +542,7 @@ We welcome contributions of new skills and improvements to existing ones!
 - [Troubleshooting Guide](skills/add-version-guard-resource/references/troubleshooting.md)
 
 **External Resources:**
-- [Agent Skills Standard](https://github.com/agent-skills/specification)
+- [Anthropic — Equipping agents for the real world with Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills)
 - [endoflife.date API](https://endoflife.date/docs/api/)
 - [Version Guard Issues](https://github.com/block/Version-Guard/issues)
 
