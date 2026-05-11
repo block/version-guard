@@ -153,16 +153,20 @@ export S3_PREFIX=snapshots/
 
 #### Run with Docker
 
-```bash
-# Build Docker image
-make docker-build
+The canonical container build is `deploy/Dockerfile`, which `docker-compose`
+invokes automatically. To build the image standalone:
 
-# Run container
-docker run -p 8080:8080 \
+```bash
+# Build the server image
+docker build -f deploy/Dockerfile -t version-guard:dev .
+
+# Run the container (HTTP admin defaults to :8081, Temporal SDK metrics to :9090)
+docker run --rm \
+  -p 8081:8081 -p 9090:9090 \
   -e TEMPORAL_ENDPOINT=host.docker.internal:7233 \
   -e TEMPORAL_NAMESPACE=version-guard-dev \
   -e AWS_REGION=us-west-2 \
-  version-guard:latest
+  version-guard:dev
 ```
 
 #### Run Full Stack with docker-compose (Recommended for Testing)
@@ -204,10 +208,9 @@ docker compose ps
 docker compose logs version-guard
 
 # Look for these lines:
-# ✓ Configuration loaded: 4 resource(s) defined
+# ✓ Configuration loaded: N resource(s) defined   (N = number of entries in resources.yaml; default is 10)
 # ✓ Wiz credentials configured — using live inventory
-# ✓ Total detectors initialized: 3
-# ✓ Temporal worker starting on queue: version-guard-detection
+# ✓ Connected to Temporal at localhost:7233 (namespace: version-guard-dev)
 # Version Guard is ready!
 ```
 

@@ -106,23 +106,28 @@ make dev
 - Use table-driven tests where appropriate
 - Mock external dependencies
 
-Example:
+Example (table-driven, mirrors the style used across `pkg/policy`,
+`pkg/config`, and `pkg/eol/endoflife`):
+
 ```go
-func TestDetector_Detect(t *testing.T) {
+func TestPolicy_Classify(t *testing.T) {
     tests := []struct {
-        name    string
-        input   *types.Resource
-        want    *types.Finding
-        wantErr bool
+        name      string
+        resource  *types.Resource
+        lifecycle *types.VersionLifecycle
+        want      types.Status
     }{
         {
-            name: "detects red status",
+            name: "past EOL classifies RED",
             // ...
         },
     }
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            // ...
+            got := policy.NewDefaultPolicy().Classify(tt.resource, tt.lifecycle)
+            if got != tt.want {
+                t.Fatalf("Classify() = %s, want %s", got, tt.want)
+            }
         })
     }
 }
@@ -130,9 +135,15 @@ func TestDetector_Detect(t *testing.T) {
 
 ### Integration Tests
 
-- Tag integration tests with `// +build integration`
-- Require actual external dependencies (Wiz, AWS, etc.)
-- Document setup requirements
+- Tag integration tests with the modern build constraint —
+  `//go:build integration` on the first line, optionally followed by the legacy
+  `// +build integration` for older toolchains. See
+  `pkg/eol/endoflife/integration_test.go` for the reference pattern.
+- Require actual external dependencies (Wiz, endoflife.date, AWS, etc.) and
+  are excluded from `make test` by default; run them with
+  `make test-integration`.
+- Document setup requirements (env vars, credentials) in the test file's
+  header comment.
 
 ## Using AI Skills to Add Resources
 
@@ -203,31 +214,48 @@ changes**.
 ```
 Version-Guard/
 ├── cmd/
-│   ├── server/          # Main server binary
+│   ├── server/          # Main server binary (worker + HTTP admin)
 │   └── cli/             # CLI tool
 ├── pkg/
-│   ├── types/           # Core data structures
-│   ├── policy/          # Classification policies
-│   ├── inventory/       # Inventory sources (Wiz, mock)
+│   ├── types/           # Core data structures (Resource, Finding, Snapshot, Status)
+│   ├── config/          # YAML loader, transforms DSL, embedded defaults
+│   │   └── defaults/    # Canonical resources.yaml shipped with the binary
+│   ├── policy/          # Classification policy (RED/YELLOW/GREEN/UNKNOWN)
+│   ├── inventory/       # Inventory sources (Wiz generic source + mock)
 │   ├── eol/             # EOL data providers (endoflife.date + schema adapters)
-│   ├── store/           # Finding storage
-│   ├── snapshot/        # S3 snapshot management
-│   ├── workflow/        # Temporal workflows
-│   ├── scan/            # Scan trigger (HTTP + CLI)
-│   └── emitters/        # Emitter interfaces + examples
-├── docs/                # Documentation
-└── .github/             # GitHub workflows
+│   ├── registry/        # Optional registry client for service lookups
+│   ├── store/           # Finding storage interface (in-memory implementation)
+│   ├── snapshot/        # Snapshot builder + store (S3 / in-memory backends)
+│   ├── workflow/        # Temporal workflows (orchestrator + detection)
+│   ├── scan/            # Scan trigger (shared by HTTP /scan and CLI)
+│   ├── schedule/        # Temporal Schedule create-or-update wiring
+│   └── emitters/        # Emitter interfaces + reference logging emitter
+├── charts/version-guard/  # Helm chart
+├── deploy/                # Dockerfile + endoflife.date override shim
+└── .github/               # GitHub Actions workflows
 ```
 
 ## Release Process
 
-Releases are managed by maintainers:
+Releases are managed by maintainers. The container image and Helm chart are
+cut from a single `vX.Y.Z` git tag by the
+[`Docker & Helm` workflow](./.github/workflows/docker.yml):
 
-1. Update version in relevant files
-2. Update CHANGELOG.md
-3. Create a git tag: `git tag -a v1.0.0 -m "Release v1.0.0"`
-4. Push tag: `git push origin v1.0.0`
-5. GitHub Actions will build and publish release artifacts
+1. If the chart has changed, bump `version` (and `appVersion` if the image
+   changed) in
+   [charts/version-guard/Chart.yaml](./charts/version-guard/Chart.yaml).
+   Land the bump on `main` as a `chore(release)` PR.
+2. Tag and push: `git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin vX.Y.Z`.
+   The tag's version **must equal** `charts/version-guard/Chart.yaml`'s
+   `version` whenever the chart changed since the previous tag — the workflow
+   fails the release otherwise.
+3. The workflow then:
+   - builds and pushes a multi-arch container image to
+     `ghcr.io/block/Version-Guard` (semver + `latest` tags), and
+   - if the chart changed since the previous `v*` tag, packages and pushes
+     the Helm chart to `oci://ghcr.io/block/charts`.
+
+There is no `CHANGELOG.md` — release notes live on the GitHub Releases page.
 
 ## Questions?
 
