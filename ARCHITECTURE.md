@@ -474,11 +474,12 @@ s3://your-bucket/snapshots/
 
 Snapshots are produced via Go's `encoding/json` defaults. Top-level fields on
 `Snapshot` and `SnapshotSummary` carry explicit `snake_case` JSON tags
-(see [pkg/types/snapshot.go](./pkg/types/snapshot.go)); per-`Finding` fields
-have no JSON tags and therefore serialize as PascalCase. The `findings_by_type`
+(see [pkg/types/snapshot.go](./pkg/types/snapshot.go)); most per-`Finding`
+fields serialize as PascalCase. Required `lifecycle_details` is the intentionally
+snake_case exception for downstream enrichment metadata. The `findings_by_type`
 map is keyed by the resource **config ID** (e.g. `aurora-mysql`, `eks`,
-`elasticache-redis`) — the uppercase `ResourceType` constants in
-`pkg/types/resource.go` are test fixtures only.
+`elasticache-redis`) — the uppercase `ResourceType` constants in `pkg/types/resource.go`
+are test fixtures only.
 
 ```json
 {
@@ -489,7 +490,7 @@ map is keyed by the resource **config ID** (e.g. `aurora-mysql`, `eks`,
   "scan_end_time": "2026-04-09T12:34:56Z",
   "scan_duration_sec": 2096,
   "findings_by_type": {
-    "aurora-mysql": [{"ResourceID": "...", "Status": "RED", "Message": "..."}],
+    "aurora-mysql": [{"ResourceID": "...", "Status": "RED", "Message": "...", "lifecycle_details": {"standard_support_end": "2024-02-29T00:00:00Z", "is_extended_support": true}}],
     "eks":          [{"ResourceID": "...", "Status": "YELLOW", "Message": "..."}]
   },
   "summary": {

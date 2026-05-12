@@ -2,6 +2,7 @@ package detection
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -330,6 +331,61 @@ func TestDetectDrift_PropagatesExtra(t *testing.T) {
 	require.NotNil(t, detect.Findings[0].Extra)
 	assert.Equal(t, "team-platform", detect.Findings[0].Extra["owner"])
 	assert.Equal(t, "engineering-prod", detect.Findings[0].Extra["cost_center"])
+}
+
+func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
+	standardSupportEnd := time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)
+	extendedSupportEnd := time.Date(2027, time.February, 28, 0, 0, 0, 0, time.UTC)
+	fetchedAt := time.Date(2026, time.May, 12, 0, 0, 0, 0, time.UTC)
+	resources := []*types.Resource{
+		{
+			ID:             "arn:aws:rds:us-east-1:123:db:mysql-57",
+			Type:           types.ResourceType("rds-mysql"),
+			CloudProvider:  types.CloudProviderAWS,
+			Engine:         "mysql",
+			CurrentVersion: "5.7.44",
+		},
+	}
+	lifecycles := map[string]*types.VersionLifecycle{
+		"mysql:5.7.44": {
+			Version:            "5.7",
+			Engine:             "mysql",
+			Source:             "endoflife-date-api",
+			DeprecationDate:    &standardSupportEnd,
+			ExtendedSupportEnd: &extendedSupportEnd,
+			EOLDate:            &extendedSupportEnd,
+			FetchedAt:          fetchedAt,
+			IsSupported:        true,
+			IsDeprecated:       true,
+			IsExtendedSupport:  true,
+		},
+	}
+	act := newTestActivities(resources, lifecycles)
+	env := newActivityEnv()
+	env.RegisterActivity(act.DetectDrift)
+
+	result, err := env.ExecuteActivity(act.DetectDrift, DetectInput{
+		Resources:         resources,
+		VersionLifecycles: lifecycles,
+	})
+	require.NoError(t, err)
+
+	var detect DetectResult
+	require.NoError(t, result.Get(&detect))
+	require.Len(t, detect.Findings, 1)
+
+	details := detect.Findings[0].LifecycleDetails
+	assert.Equal(t, "5.7", details.Version)
+	assert.Equal(t, "mysql", details.Engine)
+	assert.Equal(t, "endoflife-date-api", details.Source)
+	require.NotNil(t, details.StandardSupportEnd)
+	require.NotNil(t, details.ExtendedSupportEnd)
+	require.NotNil(t, details.EOLDate)
+	assert.Equal(t, standardSupportEnd, *details.StandardSupportEnd)
+	assert.Equal(t, extendedSupportEnd, *details.ExtendedSupportEnd)
+	assert.Equal(t, extendedSupportEnd, *details.EOLDate)
+	assert.Equal(t, fetchedAt, details.FetchedAt)
+	assert.True(t, details.IsExtendedSupport)
 }
 
 func TestDetectDrift_UnknownVersion(t *testing.T) {

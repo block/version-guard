@@ -136,6 +136,9 @@ type Finding struct {
 	// attributes without a schema change.
 	Extra map[string]string `json:",omitempty"`
 
+	// LifecycleDetails preserves structured lifecycle status for downstream enrichment.
+	LifecycleDetails LifecycleDetails `json:"lifecycle_details"`
+
 	// EOLDate is when the current version reaches End-of-Life
 	EOLDate *time.Time
 
