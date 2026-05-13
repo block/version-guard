@@ -132,6 +132,10 @@ func TestEnsureSchedule_CreatesNew(t *testing.T) {
 	action := mock.createOpts.Action.(*client.ScheduleWorkflowAction)
 	assert.Equal(t, "test-queue", action.TaskQueue)
 	assert.Equal(t, 2*time.Hour, action.WorkflowExecutionTimeout)
+	require.Len(t, action.Args, 1)
+	in, ok := action.Args[0].(orchestrator.WorkflowInput)
+	require.True(t, ok)
+	assert.Equal(t, orchestrator.ScanScopeFull, in.ScanScope)
 }
 
 func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
@@ -147,6 +151,7 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 					TaskQueue: "test-queue",
 					Args: []interface{}{orchestrator.WorkflowInput{
 						ResourceTypes: testResourceTypes,
+						ScanScope:     orchestrator.ScanScopeFull,
 					}},
 				},
 			},
@@ -230,6 +235,7 @@ func TestEnsureSchedule_AlreadyExists_NewWebhookURL(t *testing.T) {
 	assert.Equal(t, "http://emitter:8080", in.EmitterWebhookURL,
 		"updated WorkflowInput must carry the new EmitterWebhookURL")
 	assert.Equal(t, testResourceTypes, in.ResourceTypes)
+	assert.Equal(t, orchestrator.ScanScopeFull, in.ScanScope)
 }
 
 func TestEnsureSchedule_AlreadyExists_DifferentCron(t *testing.T) {

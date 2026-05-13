@@ -72,14 +72,15 @@ version_guard_detection_compliance_ratio{resource_type="aurora-mysql"} 0.5
 
 func TestRecordDetectionRun(t *testing.T) {
 	ResetForTest()
-	RecordDetectionRun("eks", ResultFailure)
+	RecordDetectionRunWithDuration("eks", ResultFailure, 2*time.Second)
 
 	expected := `
-# HELP version_guard_detection_run_total Total Version Guard detection workflow results by resource type.
-# TYPE version_guard_detection_run_total counter
-version_guard_detection_run_total{resource_type="eks",result="failure"} 1
-`
+	# HELP version_guard_detection_run_total Total Version Guard detection workflow results by resource type.
+	# TYPE version_guard_detection_run_total counter
+	version_guard_detection_run_total{resource_type="eks",result="failure"} 1
+	`
 	require.NoError(t, testutil.CollectAndCompare(detectionRunTotal, strings.NewReader(expected)))
+	require.Equal(t, 1, testutil.CollectAndCount(detectionDuration))
 	require.Equal(t, 1, testutil.CollectAndCount(detectionLastRunTimestamp))
 }
 
@@ -91,6 +92,42 @@ func TestRecordSnapshotCreateAttempt(t *testing.T) {
 # HELP version_guard_snapshot_create_attempt_total Total Version Guard snapshot creation attempts.
 # TYPE version_guard_snapshot_create_attempt_total counter
 version_guard_snapshot_create_attempt_total{result="failure"} 1
-`
+	`
 	require.NoError(t, testutil.CollectAndCompare(snapshotCreateAttemptTotal, strings.NewReader(expected)))
+}
+
+func TestRecordSnapshotValidation(t *testing.T) {
+	ResetForTest()
+	RecordSnapshotValidation(ResultFailure, SnapshotValidationReasonMissingResourceType)
+
+	expected := `
+	# HELP version_guard_snapshot_validation_total Total Version Guard snapshot validation results.
+	# TYPE version_guard_snapshot_validation_total counter
+	version_guard_snapshot_validation_total{reason="missing_resource_type",result="failure"} 1
+	`
+	require.NoError(t, testutil.CollectAndCompare(snapshotValidationTotal, strings.NewReader(expected)))
+}
+
+func TestRecordSnapshotResourceTypes(t *testing.T) {
+	ResetForTest()
+	RecordSnapshotResourceTypes(
+		[]types.ResourceType{"aurora-mysql", "lambda"},
+		[]types.ResourceType{"aurora-mysql"},
+	)
+
+	expectedPresent := `
+	# HELP version_guard_snapshot_resource_type_present Whether a resource type is present in the latest full Version Guard snapshot.
+	# TYPE version_guard_snapshot_resource_type_present gauge
+	version_guard_snapshot_resource_type_present{resource_type="aurora-mysql"} 1
+	version_guard_snapshot_resource_type_present{resource_type="lambda"} 0
+	`
+	require.NoError(t, testutil.CollectAndCompare(snapshotResourceTypePresent, strings.NewReader(expectedPresent)))
+	require.Equal(t, 2, testutil.CollectAndCount(snapshotResourceTypeExpected))
+}
+
+func TestRecordSnapshotLastValid(t *testing.T) {
+	ResetForTest()
+	RecordSnapshotLastValid("full")
+
+	require.Equal(t, 1, testutil.CollectAndCount(snapshotLastValidTimestamp))
 }

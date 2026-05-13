@@ -24,9 +24,13 @@ const (
 //nolint:govet // field alignment sacrificed for logical grouping
 type CreateSnapshotInput struct {
 	ScanID        string
+	ScanScope     string
 	ResourceTypes []types.ResourceType
-	ScanStartTime time.Time
-	ScanEndTime   time.Time
+	// ExpectedResourceTypes is populated for full scans and represents the
+	// configured resource families that must appear in the persisted snapshot.
+	ExpectedResourceTypes []types.ResourceType
+	ScanStartTime         time.Time
+	ScanEndTime           time.Time
 }
 
 type SnapshotResult struct {
@@ -36,8 +40,9 @@ type SnapshotResult struct {
 }
 
 type RecordResourceScanResultInput struct {
-	ResourceType types.ResourceType
-	Result       string
+	ResourceType   types.ResourceType
+	Result         string
+	DurationMillis int64
 }
 
 // Activities struct holds dependencies
@@ -73,7 +78,12 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 	}()
 
 	logger := activity.GetLogger(ctx)
-	logger.Info("Creating snapshot", "scanID", input.ScanID, "resourceTypeCount", len(input.ResourceTypes))
+	scanScope := normalizeScanScope(input.ScanScope)
+	logger.Info("Creating snapshot",
+		"scanID", input.ScanID,
+		"scanScope", scanScope,
+		"resourceTypeCount", len(input.ResourceTypes),
+		"expectedResourceTypeCount", len(input.ExpectedResourceTypes))
 
 	// Build snapshot by reading findings directly from the store per resource type
 	builder := snapshot.NewBuilder()
@@ -85,6 +95,7 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 			ResourceType: &rt,
 		})
 		if err != nil {
+			telemetry.RecordSnapshotValidation(telemetry.ResultFailure, telemetry.SnapshotValidationReasonStoreReadFailed)
 			return nil, fmt.Errorf("retrieve findings for %s: %w", resourceType, err)
 		}
 		logger.Info("Retrieved findings for snapshot", "resourceType", resourceType, "count", len(findings))
@@ -93,6 +104,18 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 
 	snap := builder.Build()
 	snap.SnapshotID = input.ScanID // Use scan ID as snapshot ID for correlation
+
+	validationReason, validationErr := validateSnapshotCompleteness(&input, snap)
+	if validationErr != nil {
+		telemetry.RecordSnapshotValidation(telemetry.ResultFailure, validationReason)
+		logger.Error("Snapshot validation failed",
+			"scanID", input.ScanID,
+			"scanScope", scanScope,
+			"reason", validationReason,
+			"error", validationErr)
+		return nil, validationErr
+	}
+	telemetry.RecordSnapshotValidation(telemetry.ResultSuccess, telemetry.SnapshotValidationReasonOK)
 
 	// Persist to S3
 	err := a.SnapshotStore.SaveSnapshot(ctx, snap)
@@ -106,6 +129,7 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 		"compliance", snap.Summary.CompliancePercentage)
 
 	result = telemetry.ResultSuccess
+	telemetry.RecordSnapshotLastValid(scanScope)
 	return &SnapshotResult{
 		SnapshotID:           snap.SnapshotID,
 		TotalFindings:        snap.Summary.TotalResources,
@@ -117,9 +141,97 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 // workflow from an activity, keeping Prometheus side effects out of workflow
 // replay code.
 func (a *Activities) RecordResourceScanResult(ctx context.Context, input RecordResourceScanResultInput) error {
-	telemetry.RecordDetectionRun(input.ResourceType, input.Result)
+	telemetry.RecordDetectionRunWithDuration(input.ResourceType, input.Result, time.Duration(input.DurationMillis)*time.Millisecond)
 	activity.GetLogger(ctx).Info("Recorded resource scan result",
 		"resourceType", input.ResourceType,
 		"result", input.Result)
+	return nil
+}
+
+func validateSnapshotCompleteness(input *CreateSnapshotInput, snap *types.Snapshot) (string, error) {
+	if !shouldValidateSnapshotCompleteness(input) {
+		return telemetry.SnapshotValidationReasonOK, nil
+	}
+
+	presentResourceTypes := snapshotResourceTypes(snap)
+	telemetry.RecordSnapshotResourceTypes(input.ExpectedResourceTypes, presentResourceTypes)
+
+	if len(input.ExpectedResourceTypes) == 0 {
+		return telemetry.SnapshotValidationReasonEmptyExpectedSet, fmt.Errorf("snapshot validation failed: expected resource type set is empty")
+	}
+	if snap == nil || len(presentResourceTypes) == 0 {
+		return telemetry.SnapshotValidationReasonEmptySnapshot, fmt.Errorf("snapshot validation failed: snapshot contains no resource types")
+	}
+	if err := validateSnapshotSummary(snap); err != nil {
+		return telemetry.SnapshotValidationReasonInvalidSummary, fmt.Errorf("snapshot validation failed: %w", err)
+	}
+
+	missing := missingResourceTypes(input.ExpectedResourceTypes, presentResourceTypes)
+	if len(missing) > 0 {
+		return telemetry.SnapshotValidationReasonMissingResourceType, fmt.Errorf("snapshot validation failed: missing expected resource types: %v", missing)
+	}
+
+	return telemetry.SnapshotValidationReasonOK, nil
+}
+
+func shouldValidateSnapshotCompleteness(input *CreateSnapshotInput) bool {
+	if input == nil {
+		return false
+	}
+	if normalizeScanScope(input.ScanScope) != ScanScopeFull {
+		return false
+	}
+	// Pre-validation workflow histories did not carry scan scope or expected
+	// resource types. Keep those replay paths on their original behavior.
+	return input.ScanScope != "" || len(input.ExpectedResourceTypes) > 0
+}
+
+func snapshotResourceTypes(snap *types.Snapshot) []types.ResourceType {
+	if snap == nil {
+		return nil
+	}
+
+	resourceTypes := make([]types.ResourceType, 0, len(snap.FindingsByType))
+	for resourceType := range snap.FindingsByType {
+		resourceTypes = append(resourceTypes, resourceType)
+	}
+	return resourceTypes
+}
+
+func missingResourceTypes(expected, present []types.ResourceType) []types.ResourceType {
+	presentSet := make(map[types.ResourceType]struct{}, len(present))
+	for _, resourceType := range present {
+		presentSet[resourceType] = struct{}{}
+	}
+
+	missing := make([]types.ResourceType, 0)
+	for _, resourceType := range expected {
+		if _, ok := presentSet[resourceType]; !ok {
+			missing = append(missing, resourceType)
+		}
+	}
+	return missing
+}
+
+func validateSnapshotSummary(snap *types.Snapshot) error {
+	if snap.Summary.ByResourceType == nil {
+		return fmt.Errorf("summary by_resource_type is nil")
+	}
+
+	totalByResourceType := 0
+	for resourceType, findings := range snap.FindingsByType {
+		bucket, ok := snap.Summary.ByResourceType[resourceType]
+		if !ok || bucket == nil {
+			return fmt.Errorf("summary missing resource type %s", resourceType)
+		}
+		if bucket.TotalResources != len(findings) {
+			return fmt.Errorf("summary total for %s is %d, findings contain %d", resourceType, bucket.TotalResources, len(findings))
+		}
+		totalByResourceType += bucket.TotalResources
+	}
+	if totalByResourceType != snap.Summary.TotalResources {
+		return fmt.Errorf("summary total is %d, by_resource_type totals sum to %d", snap.Summary.TotalResources, totalByResourceType)
+	}
+
 	return nil
 }

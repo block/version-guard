@@ -23,6 +23,9 @@ var ErrNoResourceTypes = fmt.Errorf("orchestrator: WorkflowInput.ResourceTypes i
 const (
 	OrchestratorWorkflowType = "VersionGuardOrchestratorWorkflow"
 	TaskQueueName            = "version-guard-orchestrator"
+
+	ScanScopeFull     = "full"
+	ScanScopeTargeted = "targeted"
 )
 
 // WorkflowInput defines the input for the orchestrator workflow.
@@ -35,7 +38,12 @@ type WorkflowInput struct {
 	// Empty disables the webhook — the snapshot remains durable in S3
 	// and downstream emitters can pull on their own cadence.
 	EmitterWebhookURL string
-	ResourceTypes     []types.ResourceType // If empty, scan all supported types
+	// ScanScope identifies whether the scan should be validated as a full
+	// configured-resource scan or treated as an intentionally targeted run.
+	// Empty values from pre-scope callers are treated as full scans once
+	// snapshot validation is enabled for the workflow history.
+	ScanScope     string
+	ResourceTypes []types.ResourceType // If empty, scan all supported types
 }
 
 // WorkflowOutput contains the results of the orchestrator workflow
@@ -85,10 +93,12 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	if input.ScanID == "" {
 		input.ScanID = info.WorkflowExecution.ID
 	}
+	scanScope := normalizeScanScope(input.ScanScope)
 
 	logger.Info("Starting orchestrator workflow",
 		"event", "scan_workflow_started",
 		"scanID", input.ScanID,
+		"scanScope", scanScope,
 		"workflowID", info.WorkflowExecution.ID,
 		"runID", info.WorkflowExecution.RunID)
 
@@ -187,8 +197,9 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 					metricsActivityCtx,
 					RecordResourceScanResultActivityName,
 					RecordResourceScanResultInput{
-						ResourceType: resourceType,
-						Result:       "failure",
+						ResourceType:   resourceType,
+						Result:         "failure",
+						DurationMillis: result.DurationMillis,
 					},
 				).Get(metricsActivityCtx, nil)
 				if recordErr != nil {
@@ -220,8 +231,9 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 				metricsActivityCtx,
 				RecordResourceScanResultActivityName,
 				RecordResourceScanResultInput{
-					ResourceType: resourceType,
-					Result:       "success",
+					ResourceType:   resourceType,
+					Result:         "success",
+					DurationMillis: result.DurationMillis,
 				},
 			).Get(metricsActivityCtx, nil)
 			if recordErr != nil {
@@ -251,18 +263,14 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	logger.Info("Stage 2: Store - Creating snapshot")
 
 	var snapshotResult SnapshotResult
+	snapshotInput := newCreateSnapshotInput(ctx, input.ScanID, scanScope, resourceTypes, successfulTypes, startTime)
 	err := workflow.ExecuteActivity(
 		workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 			StartToCloseTimeout: 5 * time.Minute,
 			RetryPolicy:         retryPolicy,
 		}),
 		CreateSnapshotActivityName,
-		CreateSnapshotInput{
-			ScanID:        input.ScanID,
-			ResourceTypes: successfulTypes,
-			ScanStartTime: startTime,
-			ScanEndTime:   workflow.Now(ctx),
-		},
+		snapshotInput,
 	).Get(ctx, &snapshotResult)
 
 	if err != nil {
@@ -347,4 +355,34 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		"durationSec", output.DurationSec)
 
 	return output, nil
+}
+
+func normalizeScanScope(scanScope string) string {
+	switch scanScope {
+	case ScanScopeTargeted:
+		return ScanScopeTargeted
+	default:
+		return ScanScopeFull
+	}
+}
+
+func newCreateSnapshotInput(
+	ctx workflow.Context,
+	scanID string,
+	scanScope string,
+	expectedResourceTypes []types.ResourceType,
+	successfulResourceTypes []types.ResourceType,
+	startTime time.Time,
+) CreateSnapshotInput {
+	input := CreateSnapshotInput{
+		ScanID:        scanID,
+		ResourceTypes: successfulResourceTypes,
+		ScanStartTime: startTime,
+		ScanEndTime:   workflow.Now(ctx),
+	}
+	if workflow.GetVersion(ctx, "snapshot-completeness-validation", workflow.DefaultVersion, 1) == 1 {
+		input.ScanScope = scanScope
+		input.ExpectedResourceTypes = expectedResourceTypes
+	}
+	return input
 }

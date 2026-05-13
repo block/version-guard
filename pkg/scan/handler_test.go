@@ -39,6 +39,11 @@ func TestHandler_POST_EmptyBody_TriggersFullScan(t *testing.T) {
 	assert.Equal(t, "wf", body.WorkflowID)
 	assert.Equal(t, "run", body.RunID)
 	assert.NotEmpty(t, body.ScanID)
+
+	require.Len(t, mock.calledArgs, 1)
+	in, ok := mock.calledArgs[0].(orchestrator.WorkflowInput)
+	require.True(t, ok, "workflow args[0] should be orchestrator.WorkflowInput")
+	assert.Equal(t, orchestrator.ScanScopeFull, in.ScanScope)
 }
 
 func TestHandler_POST_TargetedScan(t *testing.T) {
@@ -62,6 +67,7 @@ func TestHandler_POST_TargetedScan(t *testing.T) {
 	require.True(t, ok, "workflow args[0] should be orchestrator.WorkflowInput")
 	assert.Equal(t, []types.ResourceType{"aurora-mysql", "eks"}, in.ResourceTypes)
 	assert.Equal(t, "my-scan", in.ScanID)
+	assert.Equal(t, orchestrator.ScanScopeTargeted, in.ScanScope)
 }
 
 func TestHandler_RejectsNonPOST(t *testing.T) {

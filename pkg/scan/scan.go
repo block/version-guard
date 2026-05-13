@@ -134,8 +134,10 @@ func (t *Trigger) Run(ctx context.Context, in Input) (res Result, err error) {
 	// the contract boundary that translates "no body / full scan"
 	// into the YAML-derived list.
 	resourceTypes := in.ResourceTypes
+	scanScope := orchestrator.ScanScopeTargeted
 	if len(resourceTypes) == 0 {
 		resourceTypes = t.defaultResourceTypes
+		scanScope = orchestrator.ScanScopeFull
 	}
 	resourceTypeCount = len(resourceTypes)
 	if len(resourceTypes) == 0 {
@@ -154,6 +156,7 @@ func (t *Trigger) Run(ctx context.Context, in Input) (res Result, err error) {
 		ScanID:            scanID,
 		ResourceTypes:     resourceTypes,
 		EmitterWebhookURL: t.emitterWebhookURL,
+		ScanScope:         scanScope,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("scan: execute workflow: %w", err)
