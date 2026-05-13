@@ -25,6 +25,12 @@ func newOrchestratorEnv(t *testing.T) *testsuite.TestWorkflowEnvironment {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterWorkflow(OrchestratorWorkflow)
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, _ RecordResourceScanResultInput) error {
+			return nil
+		},
+		activity.RegisterOptions{Name: RecordResourceScanResultActivityName},
+	)
 	// Detection workflow is registered too so the orchestrator can
 	// invoke it as a child by function reference. Its body is stubbed
 	// per-test via env.OnWorkflow.
@@ -181,6 +187,52 @@ func TestOrchestratorWorkflow_PartialChildFailure_ContinuesWithSuccessful(t *tes
 	}
 	assert.Equal(t, 1, failed)
 	assert.Equal(t, 1, succeeded)
+}
+
+func TestOrchestratorWorkflow_FullScanSnapshotInputIncludesExpectedResourceTypes(t *testing.T) {
+	env := newOrchestratorEnv(t)
+
+	env.OnWorkflow(detection.DetectionWorkflow, mock.Anything, mock.Anything).
+		Return(func(_ workflow.Context, in detection.WorkflowInput) (*detection.WorkflowOutput, error) {
+			if in.ResourceType == types.ResourceTypeLambda {
+				return nil, errors.New("lambda detector failed")
+			}
+			return &detection.WorkflowOutput{
+				FindingsCount:  3,
+				Summary:        &types.ScanSummary{TotalResources: 3, GreenCount: 3},
+				DurationMillis: 100,
+			}, nil
+		})
+
+	var captured CreateSnapshotInput
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, in CreateSnapshotInput) (*SnapshotResult, error) {
+			captured = in
+			return &SnapshotResult{
+				SnapshotID:           "snap-partial",
+				TotalFindings:        3,
+				CompliancePercentage: 100,
+			}, nil
+		},
+		activity.RegisterOptions{Name: CreateSnapshotActivityName},
+	)
+
+	env.ExecuteWorkflow(OrchestratorWorkflow, WorkflowInput{
+		ScanID:    "scan-partial",
+		ScanScope: ScanScopeFull,
+		ResourceTypes: []types.ResourceType{
+			types.ResourceTypeAurora,
+			types.ResourceTypeLambda,
+		},
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	assert.Equal(t, ScanScopeFull, captured.ScanScope)
+	assert.Equal(t, []types.ResourceType{types.ResourceTypeAurora}, captured.ResourceTypes,
+		"snapshot should still be built only from successful resource types")
+	assert.Equal(t, []types.ResourceType{types.ResourceTypeAurora, types.ResourceTypeLambda}, captured.ExpectedResourceTypes,
+		"full-scan validation needs the originally requested resource types")
 }
 
 func TestOrchestratorWorkflow_AllChildrenFail_ReturnsError(t *testing.T) {

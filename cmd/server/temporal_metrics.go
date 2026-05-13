@@ -16,6 +16,8 @@ import (
 	tallyprom "github.com/uber-go/tally/v4/prometheus"
 	"go.temporal.io/sdk/client"
 	sdktally "go.temporal.io/sdk/contrib/tally"
+
+	"github.com/block/Version-Guard/pkg/telemetry"
 )
 
 type temporalMetricsCloser struct {
@@ -45,6 +47,10 @@ func newTemporalMetricsHandler(listenAddress string) (client.MetricsHandler, io.
 	}
 
 	registry := prom.NewRegistry()
+	if err := telemetry.Register(registry); err != nil {
+		return nil, nil, fmt.Errorf("register application metrics: %w", err)
+	}
+
 	reporter := tallyprom.NewReporter(tallyprom.Options{
 		Registerer:       registry,
 		Gatherer:         registry,

@@ -450,8 +450,9 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	fmt.Println("✓ Detection activities registered")
 
 	// Orchestrator workflow activities
+	orchestratorActivities := orchestrator.NewActivities(st, snapshotStore)
+	w.RegisterActivityWithOptions(orchestratorActivities.RecordResourceScanResult, activity.RegisterOptions{Name: orchestrator.RecordResourceScanResultActivityName})
 	if snapshotStore != nil {
-		orchestratorActivities := orchestrator.NewActivities(st, snapshotStore)
 		w.RegisterActivityWithOptions(orchestratorActivities.CreateSnapshot, activity.RegisterOptions{Name: orchestrator.CreateSnapshotActivityName})
 		w.RegisterActivityWithOptions(orchestratorActivities.NotifyEmitter, activity.RegisterOptions{Name: orchestrator.NotifyEmitterActivityName})
 		fmt.Println("✓ Orchestrator activities registered (with S3)")

@@ -103,10 +103,12 @@ func TestActivities_CreateSnapshot_HappyPath(t *testing.T) {
 	end := start.Add(60 * time.Second)
 
 	result, err := runCreateSnapshotActivity(t, a, &CreateSnapshotInput{
-		ScanID:        "scan-123",
-		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora, types.ResourceTypeEKS},
-		ScanStartTime: start,
-		ScanEndTime:   end,
+		ScanID:                "scan-123",
+		ScanScope:             ScanScopeFull,
+		ResourceTypes:         []types.ResourceType{types.ResourceTypeAurora, types.ResourceTypeEKS},
+		ExpectedResourceTypes: []types.ResourceType{types.ResourceTypeAurora, types.ResourceTypeEKS},
+		ScanStartTime:         start,
+		ScanEndTime:           end,
 	})
 	require.NoError(t, err)
 
@@ -133,10 +135,12 @@ func TestActivities_CreateSnapshot_PersistFailureReturnsError(t *testing.T) {
 	}))
 
 	_, err := runCreateSnapshotActivity(t, a, &CreateSnapshotInput{
-		ScanID:        "scan-err",
-		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
-		ScanStartTime: time.Now(),
-		ScanEndTime:   time.Now(),
+		ScanID:                "scan-err",
+		ScanScope:             ScanScopeFull,
+		ResourceTypes:         []types.ResourceType{types.ResourceTypeAurora},
+		ExpectedResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
+		ScanStartTime:         time.Now(),
+		ScanEndTime:           time.Now(),
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "s3 went down")
@@ -151,13 +155,61 @@ func TestActivities_CreateSnapshot_EmptyFindings(t *testing.T) {
 	a := NewActivities(st, fakeSnap)
 
 	result, err := runCreateSnapshotActivity(t, a, &CreateSnapshotInput{
-		ScanID:        "scan-empty",
-		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
-		ScanStartTime: time.Now(),
-		ScanEndTime:   time.Now(),
+		ScanID:                "scan-empty",
+		ScanScope:             ScanScopeFull,
+		ResourceTypes:         []types.ResourceType{types.ResourceTypeAurora},
+		ExpectedResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
+		ScanStartTime:         time.Now(),
+		ScanEndTime:           time.Now(),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.TotalFindings)
 	assert.Equal(t, "scan-empty", result.SnapshotID)
 	require.NotNil(t, fakeSnap.saved)
+}
+
+func TestActivities_CreateSnapshot_FullScanMissingExpectedResourceFails(t *testing.T) {
+	st := memory.NewStore()
+	fakeSnap := &fakeSnapshotStore{}
+	a := NewActivities(st, fakeSnap)
+
+	require.NoError(t, st.SaveFindings(context.Background(), []*types.Finding{
+		{ResourceID: "r1", ResourceType: types.ResourceTypeAurora, Status: types.StatusGreen},
+	}))
+
+	_, err := runCreateSnapshotActivity(t, a, &CreateSnapshotInput{
+		ScanID:                "scan-partial",
+		ScanScope:             ScanScopeFull,
+		ResourceTypes:         []types.ResourceType{types.ResourceTypeAurora},
+		ExpectedResourceTypes: []types.ResourceType{types.ResourceTypeAurora, types.ResourceTypeLambda},
+		ScanStartTime:         time.Now(),
+		ScanEndTime:           time.Now(),
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing expected resource types")
+	assert.Equal(t, 0, fakeSnap.saveCallCount, "invalid full snapshots must not be persisted")
+}
+
+func TestActivities_CreateSnapshot_TargetedScanAllowsPartialResourceSet(t *testing.T) {
+	st := memory.NewStore()
+	fakeSnap := &fakeSnapshotStore{}
+	a := NewActivities(st, fakeSnap)
+
+	require.NoError(t, st.SaveFindings(context.Background(), []*types.Finding{
+		{ResourceID: "r1", ResourceType: types.ResourceTypeAurora, Status: types.StatusGreen},
+	}))
+
+	result, err := runCreateSnapshotActivity(t, a, &CreateSnapshotInput{
+		ScanID:                "scan-targeted",
+		ScanScope:             ScanScopeTargeted,
+		ResourceTypes:         []types.ResourceType{types.ResourceTypeAurora},
+		ExpectedResourceTypes: []types.ResourceType{types.ResourceTypeAurora, types.ResourceTypeLambda},
+		ScanStartTime:         time.Now(),
+		ScanEndTime:           time.Now(),
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "scan-targeted", result.SnapshotID)
+	assert.Equal(t, 1, fakeSnap.saveCallCount)
 }

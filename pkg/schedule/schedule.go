@@ -81,6 +81,7 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			Args: []interface{}{orchestrator.WorkflowInput{
 				ResourceTypes:     cfg.ResourceTypes,
 				EmitterWebhookURL: cfg.EmitterWebhookURL,
+				ScanScope:         orchestrator.ScanScopeFull,
 			}},
 			TaskQueue:                cfg.TaskQueue,
 			WorkflowExecutionTimeout: 2 * time.Hour,
@@ -144,6 +145,7 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 				action.Args = []interface{}{orchestrator.WorkflowInput{
 					ResourceTypes:     cfg.ResourceTypes,
 					EmitterWebhookURL: cfg.EmitterWebhookURL,
+					ScanScope:         orchestrator.ScanScopeFull,
 				}}
 			}
 			return &client.ScheduleUpdate{
@@ -184,6 +186,9 @@ func scheduleActionMatches(action client.ScheduleAction, cfg *Config) bool {
 		return false
 	}
 	if existing.EmitterWebhookURL != cfg.EmitterWebhookURL {
+		return false
+	}
+	if existing.ScanScope != orchestrator.ScanScopeFull {
 		return false
 	}
 	if !resourceTypesEqual(existing.ResourceTypes, cfg.ResourceTypes) {

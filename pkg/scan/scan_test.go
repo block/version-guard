@@ -73,6 +73,7 @@ func TestTrigger_Run_FullScan(t *testing.T) {
 	// Empty caller list expands to the configured default — the
 	// orchestrator no longer carries a hardcoded fallback.
 	assert.Equal(t, defaults, in.ResourceTypes)
+	assert.Equal(t, orchestrator.ScanScopeFull, in.ScanScope)
 }
 
 func TestTrigger_Run_EmptyInputAndNoDefault_ReturnsError(t *testing.T) {
@@ -101,6 +102,7 @@ func TestTrigger_Run_TargetedScan(t *testing.T) {
 	require.Len(t, mock.calledArgs, 1)
 	in := mock.calledArgs[0].(orchestrator.WorkflowInput)
 	assert.Equal(t, targets, in.ResourceTypes)
+	assert.Equal(t, orchestrator.ScanScopeTargeted, in.ScanScope)
 }
 
 func TestTrigger_Run_GeneratesScanIDWhenEmpty(t *testing.T) {

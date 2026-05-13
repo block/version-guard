@@ -23,6 +23,9 @@ var ErrNoResourceTypes = fmt.Errorf("orchestrator: WorkflowInput.ResourceTypes i
 const (
 	OrchestratorWorkflowType = "VersionGuardOrchestratorWorkflow"
 	TaskQueueName            = "version-guard-orchestrator"
+
+	ScanScopeFull     = "full"
+	ScanScopeTargeted = "targeted"
 )
 
 // WorkflowInput defines the input for the orchestrator workflow.
@@ -35,7 +38,12 @@ type WorkflowInput struct {
 	// Empty disables the webhook — the snapshot remains durable in S3
 	// and downstream emitters can pull on their own cadence.
 	EmitterWebhookURL string
-	ResourceTypes     []types.ResourceType // If empty, scan all supported types
+	// ScanScope identifies whether the scan should be validated as a full
+	// configured-resource scan or treated as an intentionally targeted run.
+	// Empty values from pre-scope callers are treated as full scans once
+	// snapshot validation is enabled for the workflow history.
+	ScanScope     string
+	ResourceTypes []types.ResourceType // If empty, scan all supported types
 }
 
 // WorkflowOutput contains the results of the orchestrator workflow
@@ -78,14 +86,21 @@ type ResourceTypeResult struct {
 //nolint:revive // see comment above; rename would be a Temporal wire-format break
 func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
+	info := workflow.GetInfo(ctx)
 
 	// Ensure ScanID is set for correlation across child workflows and snapshots
 	// (scheduled executions pass empty ScanID)
 	if input.ScanID == "" {
-		input.ScanID = workflow.GetInfo(ctx).WorkflowExecution.ID
+		input.ScanID = info.WorkflowExecution.ID
 	}
+	scanScope := normalizeScanScope(input.ScanScope)
 
-	logger.Info("Starting orchestrator workflow", "scanID", input.ScanID)
+	logger.Info("Starting orchestrator workflow",
+		"event", "scan_workflow_started",
+		"scanID", input.ScanID,
+		"scanScope", scanScope,
+		"workflowID", info.WorkflowExecution.ID,
+		"runID", info.WorkflowExecution.RunID)
 
 	startTime := workflow.Now(ctx)
 
@@ -96,6 +111,12 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// "adding a resource requires a Go change" coupling we removed.
 	resourceTypes := input.ResourceTypes
 	if len(resourceTypes) == 0 {
+		logger.Error("Orchestrator workflow failed",
+			"event", "scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", ErrNoResourceTypes)
 		return nil, ErrNoResourceTypes
 	}
 
@@ -144,6 +165,16 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// order pinned to the input order, which the caller controls.
 	resourceTypeResults := make(map[types.ResourceType]*ResourceTypeResult, len(resourceTypes))
 	successfulTypes := make([]types.ResourceType, 0, len(resourceTypes))
+	recordResourceScanResults := workflow.GetVersion(ctx, "record-resource-scan-result", workflow.DefaultVersion, 1) == 1
+	metricsActivityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 10 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    3,
+		},
+	})
 
 	for _, resourceType := range resourceTypes {
 		future := futures[resourceType]
@@ -156,7 +187,29 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		}
 
 		if err != nil {
-			logger.Error("Child workflow failed", "resourceType", resourceType, "error", err)
+			logger.Error("Child workflow failed",
+				"event", "scan_resource_workflow_failed",
+				"scanID", input.ScanID,
+				"resourceType", resourceType,
+				"error", err)
+			if recordResourceScanResults {
+				recordErr := workflow.ExecuteActivity(
+					metricsActivityCtx,
+					RecordResourceScanResultActivityName,
+					RecordResourceScanResultInput{
+						ResourceType:   resourceType,
+						Result:         "failure",
+						DurationMillis: result.DurationMillis,
+					},
+				).Get(metricsActivityCtx, nil)
+				if recordErr != nil {
+					logger.Warn("Failed to record resource scan result",
+						"scanID", input.ScanID,
+						"resourceType", resourceType,
+						"result", "failure",
+						"error", recordErr)
+				}
+			}
 			result.Error = err.Error()
 			resourceTypeResults[resourceType] = result
 			continue
@@ -173,34 +226,60 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 
 		resourceTypeResults[resourceType] = result
 		successfulTypes = append(successfulTypes, resourceType)
+		if recordResourceScanResults {
+			recordErr := workflow.ExecuteActivity(
+				metricsActivityCtx,
+				RecordResourceScanResultActivityName,
+				RecordResourceScanResultInput{
+					ResourceType:   resourceType,
+					Result:         "success",
+					DurationMillis: result.DurationMillis,
+				},
+			).Get(metricsActivityCtx, nil)
+			if recordErr != nil {
+				logger.Warn("Failed to record resource scan result",
+					"scanID", input.ScanID,
+					"resourceType", resourceType,
+					"result", "success",
+					"error", recordErr)
+			}
+		}
 	}
 
 	logger.Info("Stage 1: Detect - All detection workflows completed", "successCount", len(successfulTypes))
 
 	if len(successfulTypes) == 0 {
-		return nil, fmt.Errorf("all detection workflows failed; no findings to snapshot")
+		err := fmt.Errorf("all detection workflows failed; no findings to snapshot")
+		logger.Error("Orchestrator workflow failed",
+			"event", "scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", err)
+		return nil, err
 	}
 
 	// Stage 2: STORE - Create and persist snapshot to S3
 	logger.Info("Stage 2: Store - Creating snapshot")
 
 	var snapshotResult SnapshotResult
+	snapshotInput := newCreateSnapshotInput(ctx, input.ScanID, scanScope, resourceTypes, successfulTypes, startTime)
 	err := workflow.ExecuteActivity(
 		workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 			StartToCloseTimeout: 5 * time.Minute,
 			RetryPolicy:         retryPolicy,
 		}),
 		CreateSnapshotActivityName,
-		CreateSnapshotInput{
-			ScanID:        input.ScanID,
-			ResourceTypes: successfulTypes,
-			ScanStartTime: startTime,
-			ScanEndTime:   workflow.Now(ctx),
-		},
+		snapshotInput,
 	).Get(ctx, &snapshotResult)
 
 	if err != nil {
-		logger.Error("Failed to create snapshot", "error", err)
+		logger.Error("Failed to create snapshot",
+			"event", "scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", err)
 		return nil, err
 	}
 
@@ -266,10 +345,44 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	}
 
 	logger.Info("Orchestrator workflow completed",
+		"event", "scan_workflow_completed",
+		"scanID", output.ScanID,
+		"workflowID", info.WorkflowExecution.ID,
+		"runID", info.WorkflowExecution.RunID,
 		"snapshotID", output.SnapshotID,
 		"totalFindings", output.TotalFindings,
 		"compliance", output.CompliancePercentage,
 		"durationSec", output.DurationSec)
 
 	return output, nil
+}
+
+func normalizeScanScope(scanScope string) string {
+	switch scanScope {
+	case ScanScopeTargeted:
+		return ScanScopeTargeted
+	default:
+		return ScanScopeFull
+	}
+}
+
+func newCreateSnapshotInput(
+	ctx workflow.Context,
+	scanID string,
+	scanScope string,
+	expectedResourceTypes []types.ResourceType,
+	successfulResourceTypes []types.ResourceType,
+	startTime time.Time,
+) CreateSnapshotInput {
+	input := CreateSnapshotInput{
+		ScanID:        scanID,
+		ResourceTypes: successfulResourceTypes,
+		ScanStartTime: startTime,
+		ScanEndTime:   workflow.Now(ctx),
+	}
+	if workflow.GetVersion(ctx, "snapshot-completeness-validation", workflow.DefaultVersion, 1) == 1 {
+		input.ScanScope = scanScope
+		input.ExpectedResourceTypes = expectedResourceTypes
+	}
+	return input
 }

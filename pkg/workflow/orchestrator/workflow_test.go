@@ -11,11 +11,13 @@ import (
 func TestWorkflowInput_DefaultResourceTypes(t *testing.T) {
 	input := WorkflowInput{
 		ScanID:        "test-scan-1",
+		ScanScope:     ScanScopeFull,
 		ResourceTypes: []types.ResourceType{},
 	}
 
 	// Test that empty resource types will be populated by workflow
 	assert.Equal(t, "test-scan-1", input.ScanID)
+	assert.Equal(t, ScanScopeFull, input.ScanScope)
 	assert.Empty(t, input.ResourceTypes)
 }
 

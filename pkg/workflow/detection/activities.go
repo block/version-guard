@@ -11,6 +11,7 @@ import (
 	"github.com/block/Version-Guard/pkg/inventory"
 	"github.com/block/Version-Guard/pkg/policy"
 	"github.com/block/Version-Guard/pkg/store"
+	"github.com/block/Version-Guard/pkg/telemetry"
 	"github.com/block/Version-Guard/pkg/types"
 )
 
@@ -341,7 +342,7 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 		"green", summary.GreenCount,
 		"compliance", summary.CompliancePercentage)
 
-	// TODO: Emit to Datadog/metrics system
+	telemetry.RecordDetectionSummary(input.ResourceType, summary)
 
 	if input.FindingsBatchID != "" {
 		a.resourceCache.Delete(input.FindingsBatchID)
