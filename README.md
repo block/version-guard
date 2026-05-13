@@ -166,15 +166,20 @@ docker compose up --build
 | `temporal` | Workflow orchestration | `7233` (gRPC), `8233` (Web UI) |
 | `minio` | S3-compatible snapshot storage | `9000` (API), `9001` (Console) |
 | `endoflife` | Local EOL data override (nginx) | `8082` |
-| `version-guard` | The server | `8081` (HTTP admin), `9090` (Temporal SDK metrics) |
+| `version-guard` | The server | `8081` (HTTP admin), `9090` (OpenMetrics) |
 
 The `endoflife` service serves patched EOL data for products with pending upstream PRs on [endoflife.date](https://endoflife.date), and proxies everything else to the live API. See [`deploy/endoflife-override/README.md`](./deploy/endoflife-override/README.md) for details on adding or updating overrides.
 
 Once running, open the Temporal Web UI at http://localhost:8233 to trigger and monitor workflows.
 
-Temporal SDK metrics are enabled by default and exposed at
-http://localhost:9090/metrics. Set `TEMPORAL_METRICS_ENABLED=false` to disable
-them, or set `TEMPORAL_METRICS_LISTEN_ADDRESS` to use a different address.
+Temporal SDK metrics and Version Guard application metrics are enabled by
+default and exposed at http://localhost:9090/metrics. Set
+`TEMPORAL_METRICS_ENABLED=false` to disable them, or set
+`TEMPORAL_METRICS_LISTEN_ADDRESS` to use a different address.
+
+The same OpenMetrics endpoint exports `temporal_*`, `version_guard_*`,
+`go_*`, and `process_*` series. Datadog/BPCI scrape configuration must allow
+all four families for the RCA dashboard panels to populate.
 
 #### End-to-end with `make compose-*`
 
@@ -322,7 +327,7 @@ Version Guard is configured via environment variables or CLI flags:
 | `TEMPORAL_NAMESPACE` | Temporal namespace | `version-guard-dev` |
 | `TEMPORAL_TASK_QUEUE` | Temporal task queue used by the worker | `version-guard-detection` |
 | `TEMPORAL_METRICS_ENABLED` | Enable the Temporal Go SDK Prometheus/OpenMetrics endpoint | `true` |
-| `TEMPORAL_METRICS_LISTEN_ADDRESS` | Prometheus listen address for Temporal SDK metrics | `0.0.0.0:9090` |
+| `TEMPORAL_METRICS_LISTEN_ADDRESS` | Prometheus/OpenMetrics listen address for Temporal SDK and application metrics | `0.0.0.0:9090` |
 | `HTTP_PORT` | HTTP admin port (`POST /scan`) | `8081` |
 | `S3_BUCKET` | S3 bucket for snapshots | `version-guard-snapshots` |
 | `AWS_REGION` | AWS region (for S3 snapshots) | `us-west-2` |

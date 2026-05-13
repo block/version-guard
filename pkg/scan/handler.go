@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/block/Version-Guard/pkg/telemetry"
 	"github.com/block/Version-Guard/pkg/types"
 )
 
@@ -61,6 +62,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res, err := h.trigger.Run(r.Context(), Input{
 		ScanID:        body.ScanID,
 		ResourceTypes: resourceTypes,
+		Source:        telemetry.ScanSourceHTTP,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

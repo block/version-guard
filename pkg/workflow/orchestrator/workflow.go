@@ -78,14 +78,19 @@ type ResourceTypeResult struct {
 //nolint:revive // see comment above; rename would be a Temporal wire-format break
 func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
+	info := workflow.GetInfo(ctx)
 
 	// Ensure ScanID is set for correlation across child workflows and snapshots
 	// (scheduled executions pass empty ScanID)
 	if input.ScanID == "" {
-		input.ScanID = workflow.GetInfo(ctx).WorkflowExecution.ID
+		input.ScanID = info.WorkflowExecution.ID
 	}
 
-	logger.Info("Starting orchestrator workflow", "scanID", input.ScanID)
+	logger.Info("Starting orchestrator workflow",
+		"event", "scan_workflow_started",
+		"scanID", input.ScanID,
+		"workflowID", info.WorkflowExecution.ID,
+		"runID", info.WorkflowExecution.RunID)
 
 	startTime := workflow.Now(ctx)
 
@@ -96,6 +101,12 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// "adding a resource requires a Go change" coupling we removed.
 	resourceTypes := input.ResourceTypes
 	if len(resourceTypes) == 0 {
+		logger.Error("Orchestrator workflow failed",
+			"event", "scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", ErrNoResourceTypes)
 		return nil, ErrNoResourceTypes
 	}
 
@@ -144,6 +155,16 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	// order pinned to the input order, which the caller controls.
 	resourceTypeResults := make(map[types.ResourceType]*ResourceTypeResult, len(resourceTypes))
 	successfulTypes := make([]types.ResourceType, 0, len(resourceTypes))
+	recordResourceScanResults := workflow.GetVersion(ctx, "record-resource-scan-result", workflow.DefaultVersion, 1) == 1
+	metricsActivityCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 10 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    3,
+		},
+	})
 
 	for _, resourceType := range resourceTypes {
 		future := futures[resourceType]
@@ -156,7 +177,28 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 		}
 
 		if err != nil {
-			logger.Error("Child workflow failed", "resourceType", resourceType, "error", err)
+			logger.Error("Child workflow failed",
+				"event", "scan_resource_workflow_failed",
+				"scanID", input.ScanID,
+				"resourceType", resourceType,
+				"error", err)
+			if recordResourceScanResults {
+				recordErr := workflow.ExecuteActivity(
+					metricsActivityCtx,
+					RecordResourceScanResultActivityName,
+					RecordResourceScanResultInput{
+						ResourceType: resourceType,
+						Result:       "failure",
+					},
+				).Get(metricsActivityCtx, nil)
+				if recordErr != nil {
+					logger.Warn("Failed to record resource scan result",
+						"scanID", input.ScanID,
+						"resourceType", resourceType,
+						"result", "failure",
+						"error", recordErr)
+				}
+			}
 			result.Error = err.Error()
 			resourceTypeResults[resourceType] = result
 			continue
@@ -173,12 +215,36 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 
 		resourceTypeResults[resourceType] = result
 		successfulTypes = append(successfulTypes, resourceType)
+		if recordResourceScanResults {
+			recordErr := workflow.ExecuteActivity(
+				metricsActivityCtx,
+				RecordResourceScanResultActivityName,
+				RecordResourceScanResultInput{
+					ResourceType: resourceType,
+					Result:       "success",
+				},
+			).Get(metricsActivityCtx, nil)
+			if recordErr != nil {
+				logger.Warn("Failed to record resource scan result",
+					"scanID", input.ScanID,
+					"resourceType", resourceType,
+					"result", "success",
+					"error", recordErr)
+			}
+		}
 	}
 
 	logger.Info("Stage 1: Detect - All detection workflows completed", "successCount", len(successfulTypes))
 
 	if len(successfulTypes) == 0 {
-		return nil, fmt.Errorf("all detection workflows failed; no findings to snapshot")
+		err := fmt.Errorf("all detection workflows failed; no findings to snapshot")
+		logger.Error("Orchestrator workflow failed",
+			"event", "scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", err)
+		return nil, err
 	}
 
 	// Stage 2: STORE - Create and persist snapshot to S3
@@ -200,7 +266,12 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	).Get(ctx, &snapshotResult)
 
 	if err != nil {
-		logger.Error("Failed to create snapshot", "error", err)
+		logger.Error("Failed to create snapshot",
+			"event", "scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", err)
 		return nil, err
 	}
 
@@ -266,6 +337,10 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 	}
 
 	logger.Info("Orchestrator workflow completed",
+		"event", "scan_workflow_completed",
+		"scanID", output.ScanID,
+		"workflowID", info.WorkflowExecution.ID,
+		"runID", info.WorkflowExecution.RunID,
 		"snapshotID", output.SnapshotID,
 		"totalFindings", output.TotalFindings,
 		"compliance", output.CompliancePercentage,

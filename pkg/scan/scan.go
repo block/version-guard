@@ -7,11 +7,13 @@ package scan
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
 
+	"github.com/block/Version-Guard/pkg/telemetry"
 	"github.com/block/Version-Guard/pkg/types"
 	"github.com/block/Version-Guard/pkg/workflow/orchestrator"
 )
@@ -73,6 +75,10 @@ type Input struct {
 	// ScanID lets the caller pin a correlation ID. If empty, one is generated.
 	ScanID string
 
+	// Source identifies the trigger transport, e.g. "http" or "cli".
+	// Empty is recorded as "manual".
+	Source string
+
 	// ResourceTypes limits the scan to the given resource config IDs
 	// (e.g. "aurora-mysql", "eks"). Empty means scan all configured resources.
 	ResourceTypes []types.ResourceType
@@ -87,12 +93,37 @@ type Result struct {
 
 // Run starts an OrchestratorWorkflow and returns identifiers describing the
 // running execution. It does not wait for completion.
-func (t *Trigger) Run(ctx context.Context, in Input) (Result, error) {
+func (t *Trigger) Run(ctx context.Context, in Input) (res Result, err error) {
+	start := time.Now()
+	source := telemetry.NormalizeScanSource(in.Source)
+	result := telemetry.ResultFailure
+	scanID := in.ScanID
+	workflowID := ""
+	runID := ""
+	resourceTypeCount := len(in.ResourceTypes)
+	defer func() {
+		telemetry.RecordScanTrigger(source, result, t.taskQueue, time.Since(start))
+		attrs := []any{
+			"source", source,
+			"scanID", scanID,
+			"workflowID", workflowID,
+			"runID", runID,
+			"taskQueue", t.taskQueue,
+			"resourceTypeCount", resourceTypeCount,
+		}
+		if err != nil {
+			attrs = append(attrs, "event", "scan_trigger_failed", "error", err)
+			slog.Error("scan trigger failed", attrs...)
+			return
+		}
+		attrs = append(attrs, "event", "scan_triggered")
+		slog.Info("scan triggered", attrs...)
+	}()
+
 	if t.taskQueue == "" {
 		return Result{}, fmt.Errorf("scan: task queue is required")
 	}
 
-	scanID := in.ScanID
 	if scanID == "" {
 		scanID = uuid.NewString()
 	}
@@ -106,11 +137,12 @@ func (t *Trigger) Run(ctx context.Context, in Input) (Result, error) {
 	if len(resourceTypes) == 0 {
 		resourceTypes = t.defaultResourceTypes
 	}
+	resourceTypeCount = len(resourceTypes)
 	if len(resourceTypes) == 0 {
 		return Result{}, fmt.Errorf("scan: no resource types to scan and no default configured")
 	}
 
-	workflowID := buildWorkflowID(scanID)
+	workflowID = buildWorkflowID(scanID)
 
 	opts := client.StartWorkflowOptions{
 		ID:                       workflowID,
@@ -127,9 +159,11 @@ func (t *Trigger) Run(ctx context.Context, in Input) (Result, error) {
 		return Result{}, fmt.Errorf("scan: execute workflow: %w", err)
 	}
 
+	runID = run.GetRunID()
+	result = telemetry.ResultSuccess
 	return Result{
 		WorkflowID: run.GetID(),
-		RunID:      run.GetRunID(),
+		RunID:      runID,
 		ScanID:     scanID,
 	}, nil
 }

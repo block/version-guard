@@ -9,12 +9,14 @@ import (
 
 	"github.com/block/Version-Guard/pkg/snapshot"
 	"github.com/block/Version-Guard/pkg/store"
+	"github.com/block/Version-Guard/pkg/telemetry"
 	"github.com/block/Version-Guard/pkg/types"
 )
 
 // Activity names
 const (
-	CreateSnapshotActivityName = "version-guard.CreateSnapshot"
+	CreateSnapshotActivityName           = "version-guard.CreateSnapshot"
+	RecordResourceScanResultActivityName = "version-guard.RecordResourceScanResult"
 )
 
 // Activity input/output types
@@ -31,6 +33,11 @@ type SnapshotResult struct {
 	SnapshotID           string
 	TotalFindings        int
 	CompliancePercentage float64
+}
+
+type RecordResourceScanResultInput struct {
+	ResourceType types.ResourceType
+	Result       string
 }
 
 // Activities struct holds dependencies
@@ -60,6 +67,11 @@ func NewActivities(
 //
 //nolint:gocritic // Temporal activity inputs are passed by value by convention; the SDK marshals them through its DataConverter
 func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInput) (*SnapshotResult, error) {
+	result := telemetry.ResultFailure
+	defer func() {
+		telemetry.RecordSnapshotCreateAttempt(result)
+	}()
+
 	logger := activity.GetLogger(ctx)
 	logger.Info("Creating snapshot", "scanID", input.ScanID, "resourceTypeCount", len(input.ResourceTypes))
 
@@ -93,9 +105,21 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 		"totalFindings", snap.Summary.TotalResources,
 		"compliance", snap.Summary.CompliancePercentage)
 
+	result = telemetry.ResultSuccess
 	return &SnapshotResult{
 		SnapshotID:           snap.SnapshotID,
 		TotalFindings:        snap.Summary.TotalResources,
 		CompliancePercentage: snap.Summary.CompliancePercentage,
 	}, nil
+}
+
+// RecordResourceScanResult emits the logical result of a detection child
+// workflow from an activity, keeping Prometheus side effects out of workflow
+// replay code.
+func (a *Activities) RecordResourceScanResult(ctx context.Context, input RecordResourceScanResultInput) error {
+	telemetry.RecordDetectionRun(input.ResourceType, input.Result)
+	activity.GetLogger(ctx).Info("Recorded resource scan result",
+		"resourceType", input.ResourceType,
+		"result", input.Result)
+	return nil
 }

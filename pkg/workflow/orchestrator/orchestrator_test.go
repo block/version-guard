@@ -25,6 +25,12 @@ func newOrchestratorEnv(t *testing.T) *testsuite.TestWorkflowEnvironment {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterWorkflow(OrchestratorWorkflow)
+	env.RegisterActivityWithOptions(
+		func(_ context.Context, _ RecordResourceScanResultInput) error {
+			return nil
+		},
+		activity.RegisterOptions{Name: RecordResourceScanResultActivityName},
+	)
 	// Detection workflow is registered too so the orchestrator can
 	// invoke it as a child by function reference. Its body is stubbed
 	// per-test via env.OnWorkflow.

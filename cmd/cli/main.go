@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/block/Version-Guard/pkg/scan"
+	"github.com/block/Version-Guard/pkg/telemetry"
 	"github.com/block/Version-Guard/pkg/types"
 )
 
@@ -218,6 +219,7 @@ func (c *ScanStartCmd) Run(ctx *Context) error {
 	res, err := trigger.Run(context.Background(), scan.Input{
 		ScanID:        c.ScanID,
 		ResourceTypes: resourceTypes,
+		Source:        telemetry.ScanSourceCLI,
 	})
 	if err != nil {
 		return fmt.Errorf("trigger scan: %w", err)
