@@ -203,9 +203,11 @@ resources:
         tags: "tags"
     eol:
       provider: endoflife-date
-      # Upstream memcached product — endoflife.date does not have an
-      # AWS-flavored amazon-elasticache-memcached product.
-      product: memcached
+      # AWS still supports Memcached 1.5.x on ElastiCache; upstream Memcached
+      # EOL'd 1.5 in March 2020, so the upstream `memcached` product would
+      # mislabel 1.5 clusters as EOL. AWS-flavored product PR:
+      # https://github.com/endoflife-date/endoflife.date/pull/10129
+      product: amazon-elasticache-memcached
       schema: standard
 
   - id: opensearch
