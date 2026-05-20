@@ -81,7 +81,5 @@
         tags: "tags"
     eol:
       provider: endoflife-date
-      # Upstream memcached — endoflife.date does not have an
-      # amazon-elasticache-memcached product.
-      product: memcached
+      product: amazon-elasticache-memcached
       schema: standard
