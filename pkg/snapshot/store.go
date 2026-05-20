@@ -17,9 +17,10 @@ import (
 const (
 	// SnapshotSchemaVersion is the current schema version for snapshots.
 	//
-	// v3 (current): removed Finding.Recommendation from the snapshot
-	//   schema; remediation guidance belongs in curated docs, not in
-	//   generated findings.
+	// v3 (current): removed Finding.Recommendation from the snapshot schema;
+	//   remediation guidance belongs in curated docs, not in generated
+	//   findings. Finding.lifecycle_details is required metadata added for
+	//   downstream enrichment and remains backward-compatible within v3.
 	// v2 (deprecated): tightened the typed Finding surface to only the
 	//   fields the system itself requires (identity, EOL keys, service,
 	//   classification metadata, tags). Top-level resource_name,

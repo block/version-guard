@@ -155,6 +155,8 @@ func TestBuilder_JSONWireShape(t *testing.T) {
 // downstream tools have been told to drop, so the test fails fast on
 // regressions.
 func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
+	standardSupportEnd := time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)
+	extendedSupportEnd := time.Date(2027, time.February, 28, 0, 0, 0, 0, time.UTC)
 	snap := NewBuilder().
 		AddFindings(types.ResourceTypeAurora, []*types.Finding{
 			{
@@ -168,6 +170,17 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 					"name":       "c1",
 					"account_id": "123456789012",
 					"region":     "us-east-1",
+				},
+				LifecycleDetails: types.LifecycleDetails{
+					StandardSupportEnd: &standardSupportEnd,
+					ExtendedSupportEnd: &extendedSupportEnd,
+					EOLDate:            &extendedSupportEnd,
+					Version:            "13",
+					Engine:             "aurora-postgresql",
+					Source:             "endoflife-date-api",
+					IsSupported:        true,
+					IsDeprecated:       true,
+					IsExtendedSupport:  true,
 				},
 			},
 		}).
@@ -205,4 +218,14 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 	assert.Equal(t, "c1", extra["name"])
 	assert.Equal(t, "123456789012", extra["account_id"])
 	assert.Equal(t, "us-east-1", extra["region"])
+
+	lifecycleDetails, ok := finding["lifecycle_details"].(map[string]any)
+	require.True(t, ok, "v3 finding JSON must carry lifecycle_details for downstream enrichment")
+	assert.Equal(t, "2024-02-29T00:00:00Z", lifecycleDetails["standard_support_end"])
+	assert.Equal(t, "2027-02-28T00:00:00Z", lifecycleDetails["extended_support_end"])
+	assert.Equal(t, "2027-02-28T00:00:00Z", lifecycleDetails["eol_date"])
+	assert.Equal(t, "13", lifecycleDetails["version"])
+	assert.Equal(t, "aurora-postgresql", lifecycleDetails["engine"])
+	assert.Equal(t, "endoflife-date-api", lifecycleDetails["source"])
+	assert.Equal(t, true, lifecycleDetails["is_extended_support"])
 }

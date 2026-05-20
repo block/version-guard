@@ -510,10 +510,11 @@ s3://your-bucket/snapshots/latest.json
 
 Snapshots are produced via Go's `encoding/json` defaults. Top-level fields on
 `Snapshot` and `SnapshotSummary` carry explicit `snake_case` tags (see
-[pkg/types/snapshot.go](./pkg/types/snapshot.go)); per-`Finding` fields have no
-JSON tags and therefore serialize as PascalCase. The `findings_by_type` map is
-keyed by the resource config ID (e.g. `aurora-mysql`, `eks`), not by the
-`ResourceType` constants used in tests.
+[pkg/types/snapshot.go](./pkg/types/snapshot.go)); most per-`Finding` fields
+serialize as PascalCase. Required `lifecycle_details` is the intentionally
+snake_case exception for downstream enrichment metadata. The `findings_by_type` map is keyed
+by the resource config ID (e.g. `aurora-mysql`, `eks`), not by the `ResourceType`
+constants used in tests.
 
 ```json
 {
@@ -533,6 +534,18 @@ keyed by the resource config ID (e.g. `aurora-mysql`, `eks`), not by the
         "Engine": "aurora-mysql",
         "Status": "RED",
         "Message": "Running deprecated version 5.6.10a (EOL: 2024-02-29)",
+        "lifecycle_details": {
+          "standard_support_end": "2024-02-29T00:00:00Z",
+          "extended_support_end": "2027-02-28T00:00:00Z",
+          "eol_date": "2027-02-28T00:00:00Z",
+          "version": "5.7",
+          "engine": "mysql",
+          "source": "endoflife-date-api",
+          "is_supported": true,
+          "is_deprecated": true,
+          "is_extended_support": true,
+          "is_eol": false
+        },
         "DetectedAt": "2026-04-09T12:34:56Z",
         "UpdatedAt": "2026-04-09T12:34:56Z"
       }
