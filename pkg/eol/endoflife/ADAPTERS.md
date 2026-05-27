@@ -88,8 +88,9 @@ Supported actions:
 
 ### EKS
 
-EKS cycle `eol` means end of standard support, not true EOL. Clusters
-keep running after extended support, but AWS stops patching them.
+EKS cycle `eol` means end of standard support, not true EOL.
+`extendedSupport` is the end of paid extended support and the terminal
+EOL date used in findings.
 
 ```yaml
 eol:
@@ -102,6 +103,8 @@ eol:
     extended_support_end:
       field: extendedSupport
       bool_true_fallback: eol
+    eol_date:
+      field: extendedSupport
     deprecated_window: extended_support
     past_extended_support: unsupported
 ```
@@ -111,14 +114,15 @@ For amazon-eks cycle 1.30 (`eol: 2025-07-23`,
 
 | Field | Value | Source / note |
 | --- | --- | --- |
-| `EOLDate` | `nil` | omitted in YAML |
+| `EOLDate` | `2026-07-23` | `cycle.extendedSupport` |
 | `DeprecationDate` | `2025-07-23` | `cycle.eol` |
 | `ExtendedSupportEnd` | `2026-07-23` | `cycle.extendedSupport` |
 | `IsExtendedSupport` | `true` | `deprecated_window: extended_support` |
 
 Policy classifies that as YELLOW. Past `extendedSupport`, the
-`past_extended_support: unsupported` action makes it RED without
-claiming the cluster has a true EOL date.
+`EOLDate` check makes it RED. The `past_extended_support: unsupported`
+fallback only matters for archived data where `extendedSupport` was a
+boolean and no terminal EOL date is available.
 
 ### Lambda
 

@@ -65,6 +65,17 @@ func TestGetMessage_Yellow_ExtendedSupport(t *testing.T) {
 	assert.Contains(t, got, "extended support")
 }
 
+func TestGetMessage_Yellow_ExtendedSupport_WithEOL(t *testing.T) {
+	p := NewDefaultPolicy()
+	res := &types.Resource{Engine: "eks", CurrentVersion: "1.32"}
+	eol := time.Date(2027, 3, 23, 0, 0, 0, 0, time.UTC)
+	lc := &types.VersionLifecycle{IsExtendedSupport: true, EOLDate: &eol}
+
+	got := p.GetMessage(res, lc, types.StatusYellow)
+	assert.Contains(t, got, "extended support")
+	assert.NotContains(t, got, "End-of-Life")
+}
+
 func TestGetMessage_Yellow_DeprecatedSupport_WithEOL(t *testing.T) {
 	// Lambda-style: IsDeprecatedSupport with a deprecated-support
 	// end date. Exercises the IsDeprecatedSupport+EOLDate branch and

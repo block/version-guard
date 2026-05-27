@@ -340,6 +340,7 @@ func TestProvider_DeclarativeLifecycle(t *testing.T) {
 			Field:            lifecycleFieldExtendedSupport,
 			BoolTrueFallback: lifecycleFieldEOL,
 		},
+		EOLDate:             LifecycleDateSource{Field: lifecycleFieldExtendedSupport},
 		DeprecatedWindow:    lifecycleActionExtendedSupport,
 		PastExtendedSupport: lifecycleActionUnsupported,
 	}
@@ -370,13 +371,15 @@ func TestProvider_DeclarativeLifecycle(t *testing.T) {
 				t.Errorf("Expected version 1.32, got %s", v.Version)
 			}
 			// Declarative EKS config: cycle.EOL → DeprecationDate and
-			// cycle.ExtendedSupport → ExtendedSupportEnd. EOLDate stays nil
-			// because EKS clusters never truly EOL.
-			if v.EOLDate != nil {
-				t.Errorf("EOLDate = %v, want nil (EKS has no true EOL)", v.EOLDate)
+			// cycle.ExtendedSupport → ExtendedSupportEnd and EOLDate.
+			if v.EOLDate == nil {
+				t.Error("EOLDate should be set from cycle.ExtendedSupport")
 			}
 			if v.ExtendedSupportEnd == nil {
 				t.Error("ExtendedSupportEnd should be set from cycle.ExtendedSupport")
+			}
+			if v.EOLDate != nil && v.ExtendedSupportEnd != nil && !v.EOLDate.Equal(*v.ExtendedSupportEnd) {
+				t.Errorf("EOLDate = %v, want ExtendedSupportEnd %v", v.EOLDate, v.ExtendedSupportEnd)
 			}
 		})
 	}
