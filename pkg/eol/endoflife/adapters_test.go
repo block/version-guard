@@ -253,6 +253,7 @@ func eksDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
 			Field:            lifecycleFieldExtendedSupport,
 			BoolTrueFallback: lifecycleFieldEOL,
 		},
+		EOLDate:             LifecycleDateSource{Field: lifecycleFieldExtendedSupport},
 		DeprecatedWindow:    lifecycleActionExtendedSupport,
 		PastExtendedSupport: lifecycleActionUnsupported,
 	})
@@ -351,12 +352,13 @@ func TestDeclarativeSchemaAdapter_EKSCurrentVersion(t *testing.T) {
 	assert.False(t, lifecycle.IsEOL)
 	assert.False(t, lifecycle.IsExtendedSupport)
 
-	// EKS has NO true EOL.
-	assert.Nil(t, lifecycle.EOLDate)
+	// EKS true EOL is the end of extended support.
+	assert.NotNil(t, lifecycle.EOLDate)
 	// DeprecationDate = cycle.eol (end of standard support).
 	assert.NotNil(t, lifecycle.DeprecationDate)
-	// ExtendedSupportEnd = cycle.extendedSupport.
+	// ExtendedSupportEnd and EOLDate = cycle.extendedSupport.
 	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
+	assert.Equal(t, *lifecycle.ExtendedSupportEnd, *lifecycle.EOLDate)
 }
 
 func TestDeclarativeSchemaAdapter_EKSInExtendedSupport(t *testing.T) {
@@ -378,8 +380,9 @@ func TestDeclarativeSchemaAdapter_EKSInExtendedSupport(t *testing.T) {
 
 	assert.True(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
-	assert.False(t, lifecycle.IsEOL) // EKS never truly EOL
+	assert.False(t, lifecycle.IsEOL)
 	assert.True(t, lifecycle.IsExtendedSupport)
+	assert.NotNil(t, lifecycle.EOLDate)
 }
 
 func TestDeclarativeSchemaAdapter_EKSPastExtendedSupport(t *testing.T) {
@@ -398,11 +401,11 @@ func TestDeclarativeSchemaAdapter_EKSPastExtendedSupport(t *testing.T) {
 
 	assert.False(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
-	assert.False(t, lifecycle.IsEOL) // EKS clusters keep running
+	assert.True(t, lifecycle.IsEOL)
 	assert.False(t, lifecycle.IsExtendedSupport)
 }
 
-func TestDeclarativeSchemaAdapter_EKSNoTrueEOL(t *testing.T) {
+func TestDeclarativeSchemaAdapter_EKSEOLIsExtendedSupportEnd(t *testing.T) {
 	adapter := eksDeclarativeAdapter(t)
 
 	cycle := &ProductCycle{
@@ -415,12 +418,13 @@ func TestDeclarativeSchemaAdapter_EKSNoTrueEOL(t *testing.T) {
 	lifecycle, err := adapter.AdaptCycle(cycle)
 	require.NoError(t, err)
 
-	// Verify EKS has NO true EOL date.
-	assert.Nil(t, lifecycle.EOLDate)
+	// Verify EKS true EOL is the end of extended support.
+	assert.NotNil(t, lifecycle.EOLDate)
+	expectedDate, _ := time.Parse("2006-01-02", "2022-07-15")
+	assert.Equal(t, expectedDate, *lifecycle.EOLDate)
 
 	// ExtendedSupportEnd comes from cycle.extendedSupport (NOT cycle.eol).
 	assert.NotNil(t, lifecycle.ExtendedSupportEnd)
-	expectedDate, _ := time.Parse("2006-01-02", "2022-07-15")
 	assert.Equal(t, expectedDate, *lifecycle.ExtendedSupportEnd)
 
 	// DeprecationDate comes from cycle.eol (end of standard support).
@@ -453,6 +457,8 @@ func TestDeclarativeSchemaAdapter_EKSLegacyBooleanExtendedSupport(t *testing.T) 
 	assert.False(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
 	assert.False(t, lifecycle.IsExtendedSupport)
+	// Legacy boolean extendedSupport has no terminal date, so EOLDate stays nil
+	// rather than using cycle.eol (standard-support end) as true EOL.
 	assert.Nil(t, lifecycle.EOLDate)
 }
 

@@ -109,6 +109,8 @@ resources:
         extended_support_end:
           field: extendedSupport
           bool_true_fallback: eol
+        eol_date:
+          field: extendedSupport
         deprecated_window: extended_support
         past_extended_support: unsupported
 `
@@ -127,6 +129,7 @@ resources:
 	assert.Equal(t, "declarative", cfg.Resources[1].EOL.Schema)
 	require.NotNil(t, cfg.Resources[1].EOL.Lifecycle)
 	assert.Equal(t, "eol", cfg.Resources[1].EOL.Lifecycle.DeprecationDate.Field)
+	assert.Equal(t, "extendedSupport", cfg.Resources[1].EOL.Lifecycle.EOLDate.Field)
 }
 
 // TestLoadResourcesConfig_EmbeddedDefault asserts the binary works

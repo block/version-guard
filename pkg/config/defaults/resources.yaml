@@ -122,9 +122,12 @@ resources:
           field: extendedSupport
           bool_true_fallback: eol
         deprecated_window: extended_support
-        # EKS clusters keep running after extended support, but AWS stops
-        # patching them. Leave eol_date unset and classify post-extended as
-        # unsupported rather than true EOL.
+        # EKS true EOL is the end of extended support. The upstream
+        # extendedSupport field is now a date; if archived data has the old
+        # boolean shape, eol_date stays unset rather than treating the end of
+        # standard support as terminal EOL.
+        eol_date:
+          field: extendedSupport
         past_extended_support: unsupported
 
   # ElastiCache is split per-engine because each engine has its own
