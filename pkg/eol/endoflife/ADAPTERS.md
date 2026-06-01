@@ -127,7 +127,9 @@ boolean and no terminal EOL date is available.
 ### Lambda
 
 Lambda uses Standard Support and Deprecated Support columns instead of
-`extendedSupport`. The deprecated-support window should be YELLOW.
+`extendedSupport`. For Version Guard's user-facing `EOLDate`, Lambda uses
+the first/actionable date (`support`) so dashboards do not show AWS's later
+terminal deprecated-support date as the runtime EOL.
 
 ```yaml
 eol:
@@ -140,14 +142,13 @@ eol:
     extended_support_end:
       field: eol
     eol_date:
-      field: eol
-    deprecated_window: extended_support
-    past_extended_support: eol
+      field: support
 ```
 
-For `python3.8` (`support: 2024-10-14`, `eol: 2026-09-30`), dates
-between those two boundaries become YELLOW. Dates after `eol` become
-true EOL / RED.
+For `python3.8` (`support: 2024-10-14`, `eol: 2027-03-03`), the emitted
+`EOLDate` is `2024-10-14`, while `ExtendedSupportEnd` preserves the later
+AWS terminal date for downstream consumers that need it. Dates after
+`support` become true EOL / RED.
 
 ---
 
