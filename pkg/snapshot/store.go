@@ -17,7 +17,11 @@ import (
 const (
 	// SnapshotSchemaVersion is the current schema version for snapshots.
 	//
-	// v3 (current): removed Finding.Recommendation from the snapshot schema;
+	// v4 (current): replaced the top-level Finding.EOLDate JSON date and
+	//   lifecycle_details block with Finding.eol, a structured block that
+	//   carries every provider-exposed support boundary, metadata dates, and
+	//   actionable_date.
+	// v3 (deprecated): removed Finding.Recommendation from the snapshot schema;
 	//   remediation guidance belongs in curated docs, not in generated
 	//   findings. Finding.lifecycle_details is required metadata added for
 	//   downstream enrichment and remains backward-compatible within v3.
@@ -29,7 +33,7 @@ const (
 	//   ("name", "account_id", "region").
 	// v1 (deprecated): typed Finding included resource_name,
 	//   cloud_account_id, and cloud_region as top-level keys.
-	SnapshotSchemaVersion = "v3"
+	SnapshotSchemaVersion = "v4"
 )
 
 // Store handles persisting snapshots to S3

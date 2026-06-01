@@ -475,8 +475,11 @@ s3://your-bucket/snapshots/
 Snapshots are produced via Go's `encoding/json` defaults. Top-level fields on
 `Snapshot` and `SnapshotSummary` carry explicit `snake_case` JSON tags
 (see [pkg/types/snapshot.go](./pkg/types/snapshot.go)); most per-`Finding`
-fields serialize as PascalCase. Required `lifecycle_details` is the intentionally
-snake_case exception for downstream enrichment metadata. The `findings_by_type`
+fields serialize as PascalCase. Required `eol` is the intentionally snake_case
+exception for downstream enrichment metadata and carries every provider-exposed
+support boundary plus metadata dates such as `release_date`,
+`latest_release_date`, and date-valued `lts_date`; `eol.actionable_date` is the
+first date used for yellow warning windows. The `findings_by_type`
 map is keyed by the resource **config ID** (e.g. `aurora-mysql`, `eks`,
 `elasticache-redis`) — the uppercase `ResourceType` constants in `pkg/types/resource.go`
 are test fixtures only.
@@ -484,13 +487,13 @@ are test fixtures only.
 ```json
 {
   "snapshot_id": "scan-2026-04-09-123456",
-  "version": "v3",
+  "version": "v4",
   "generated_at": "2026-04-09T12:34:56Z",
   "scan_start_time": "2026-04-09T12:00:00Z",
   "scan_end_time": "2026-04-09T12:34:56Z",
   "scan_duration_sec": 2096,
   "findings_by_type": {
-    "aurora-mysql": [{"ResourceID": "...", "Status": "RED", "Message": "...", "lifecycle_details": {"standard_support_end": "2024-02-29T00:00:00Z", "is_extended_support": true}}],
+    "aurora-mysql": [{"ResourceID": "...", "Status": "RED", "Message": "...", "eol": {"standard_support_end": "2024-02-29T00:00:00Z", "latest_release_date": "2025-02-13T00:00:00Z", "actionable_date": "2024-02-29T00:00:00Z", "is_extended_support": true}}],
     "eks":          [{"ResourceID": "...", "Status": "YELLOW", "Message": "..."}]
   },
   "summary": {

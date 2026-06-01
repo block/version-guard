@@ -250,6 +250,7 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 		// Classify using policy
 		status := a.Policy.Classify(resource, lifecycle)
 		message := a.Policy.GetMessage(resource, lifecycle, status)
+		lifecycleDetails := types.LifecycleDetailsFromVersionLifecycle(lifecycle)
 
 		// Create finding. Name, account, and region (when configured) are
 		// part of resource.Extra and propagate through verbatim.
@@ -265,7 +266,8 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 			EOLDate:          lifecycle.EOLDate,
 			Tags:             resource.Tags,
 			Extra:            resource.Extra,
-			LifecycleDetails: types.LifecycleDetailsFromVersionLifecycle(lifecycle),
+			EOL:              lifecycleDetails,
+			LifecycleDetails: lifecycleDetails,
 		}
 
 		findings = append(findings, finding)

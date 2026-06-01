@@ -120,7 +120,7 @@ func TestActivities_CreateSnapshot_HappyPath(t *testing.T) {
 	require.Equal(t, 1, fakeSnap.saveCallCount)
 	require.NotNil(t, fakeSnap.saved)
 	assert.Equal(t, "scan-123", fakeSnap.saved.SnapshotID)
-	assert.Equal(t, "v3", fakeSnap.saved.Version)
+	assert.Equal(t, "v4", fakeSnap.saved.Version)
 	assert.Equal(t, int64(60), fakeSnap.saved.ScanDurationSec)
 	assert.Equal(t, 3, fakeSnap.saved.Summary.TotalResources)
 }

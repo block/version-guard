@@ -336,6 +336,7 @@ func TestDetectDrift_PropagatesExtra(t *testing.T) {
 func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
 	standardSupportEnd := time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)
 	extendedSupportEnd := time.Date(2027, time.February, 28, 0, 0, 0, 0, time.UTC)
+	latestReleaseDate := time.Date(2025, time.February, 13, 0, 0, 0, 0, time.UTC)
 	fetchedAt := time.Date(2026, time.May, 12, 0, 0, 0, 0, time.UTC)
 	resources := []*types.Resource{
 		{
@@ -354,6 +355,7 @@ func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
 			DeprecationDate:    &standardSupportEnd,
 			ExtendedSupportEnd: &extendedSupportEnd,
 			EOLDate:            &extendedSupportEnd,
+			LatestReleaseDate:  &latestReleaseDate,
 			FetchedAt:          fetchedAt,
 			IsSupported:        true,
 			IsDeprecated:       true,
@@ -374,16 +376,20 @@ func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
 	require.NoError(t, result.Get(&detect))
 	require.Len(t, detect.Findings, 1)
 
-	details := detect.Findings[0].LifecycleDetails
+	details := detect.Findings[0].EOL
 	assert.Equal(t, "5.7", details.Version)
 	assert.Equal(t, "mysql", details.Engine)
 	assert.Equal(t, "endoflife-date-api", details.Source)
 	require.NotNil(t, details.StandardSupportEnd)
 	require.NotNil(t, details.ExtendedSupportEnd)
 	require.NotNil(t, details.EOLDate)
+	require.NotNil(t, details.LatestReleaseDate)
+	require.NotNil(t, details.ActionableDate)
 	assert.Equal(t, standardSupportEnd, *details.StandardSupportEnd)
 	assert.Equal(t, extendedSupportEnd, *details.ExtendedSupportEnd)
 	assert.Equal(t, extendedSupportEnd, *details.EOLDate)
+	assert.Equal(t, latestReleaseDate, *details.LatestReleaseDate)
+	assert.Equal(t, standardSupportEnd, *details.ActionableDate)
 	assert.Equal(t, fetchedAt, details.FetchedAt)
 	assert.True(t, details.IsExtendedSupport)
 }

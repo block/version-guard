@@ -26,10 +26,11 @@ func TestRealHTTPClient_GetProductCycles(t *testing.T) {
 				{
 					"cycle": "1.31",
 					"releaseDate": "2024-11-19",
+					"latestReleaseDate": "2025-01-15",
 					"support": "2025-12-19",
 					"eol": "2027-05-19",
 					"extendedSupport": true,
-					"lts": false
+					"lts": "2025-02-01"
 				},
 				{
 					"cycle": "1.30",
@@ -101,6 +102,12 @@ func TestRealHTTPClient_GetProductCycles(t *testing.T) {
 				}
 				if cycles[0].ReleaseDate != "2024-11-19" {
 					t.Errorf("First cycle release date = %s, want 2024-11-19", cycles[0].ReleaseDate)
+				}
+				if cycles[0].LatestReleaseDate != "2025-01-15" {
+					t.Errorf("First cycle latest release date = %s, want 2025-01-15", cycles[0].LatestReleaseDate)
+				}
+				if cycles[0].LTS != "2025-02-01" {
+					t.Errorf("First cycle lts = %v, want 2025-02-01", cycles[0].LTS)
 				}
 			}
 		})

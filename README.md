@@ -511,15 +511,18 @@ s3://your-bucket/snapshots/latest.json
 Snapshots are produced via Go's `encoding/json` defaults. Top-level fields on
 `Snapshot` and `SnapshotSummary` carry explicit `snake_case` tags (see
 [pkg/types/snapshot.go](./pkg/types/snapshot.go)); most per-`Finding` fields
-serialize as PascalCase. Required `lifecycle_details` is the intentionally
-snake_case exception for downstream enrichment metadata. The `findings_by_type` map is keyed
+serialize as PascalCase. Required `eol` is the intentionally snake_case
+exception for downstream enrichment metadata and includes every support boundary
+the EOL provider exposes, plus metadata dates such as `release_date`,
+`latest_release_date`, and date-valued `lts_date`. `eol.actionable_date` is the
+first lifecycle date used for yellow warning windows. The `findings_by_type` map is keyed
 by the resource config ID (e.g. `aurora-mysql`, `eks`), not by the `ResourceType`
 constants used in tests.
 
 ```json
 {
   "snapshot_id": "scan-2026-04-09-123456",
-  "version": "v3",
+  "version": "v4",
   "generated_at": "2026-04-09T12:34:56Z",
   "scan_start_time": "2026-04-09T12:00:00Z",
   "scan_end_time": "2026-04-09T12:34:56Z",
@@ -534,10 +537,13 @@ constants used in tests.
         "Engine": "aurora-mysql",
         "Status": "RED",
         "Message": "Running deprecated version 5.6.10a (EOL: 2024-02-29)",
-        "lifecycle_details": {
+        "eol": {
           "standard_support_end": "2024-02-29T00:00:00Z",
           "extended_support_end": "2027-02-28T00:00:00Z",
           "eol_date": "2027-02-28T00:00:00Z",
+          "actionable_date": "2024-02-29T00:00:00Z",
+          "release_date": "2016-02-22T00:00:00Z",
+          "latest_release_date": "2025-02-13T00:00:00Z",
           "version": "5.7",
           "engine": "mysql",
           "source": "endoflife-date-api",
