@@ -320,7 +320,8 @@ resources:
       product: aws-lambda
       # Lambda's `support` date is the first/actionable runtime EOL date.
       # The upstream `eol` date is AWS's later terminal deprecated-support
-      # date. Keep both in the finding's eol block, but warn on the first date.
+      # date. Keep both in the finding's eol block, but use the actionable
+      # date as the status-driving EOLDate so past-support runtimes are RED.
       schema: declarative
       lifecycle:
         deprecation_date:
@@ -329,7 +330,7 @@ resources:
           field: eol
         deprecated_window: deprecated_support
         eol_date:
-          field: eol
+          field: support
 
   # To add a new resource type, follow skills/add-version-guard-resource.
   # Standalone copy-paste templates live in skills/add-version-guard-resource/examples/.

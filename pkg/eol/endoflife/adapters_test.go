@@ -300,7 +300,7 @@ func lambdaActionableEOLAdapter(t *testing.T) *DeclarativeSchemaAdapter {
 	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
 		DeprecationDate:      LifecycleDateSource{Field: lifecycleFieldSupport},
 		DeprecatedSupportEnd: LifecycleDateSource{Field: lifecycleFieldEOL},
-		EOLDate:              LifecycleDateSource{Field: lifecycleFieldEOL},
+		EOLDate:              LifecycleDateSource{Field: lifecycleFieldSupport},
 		DeprecatedWindow:     lifecycleActionDeprecatedSupport,
 	})
 	require.NoError(t, err)
@@ -394,7 +394,7 @@ func TestDeclarativeSchemaAdapter_LambdaPreservesActionableAndTerminalDates(t *t
 	require.NotNil(t, lifecycle.DeprecationDate)
 	require.NotNil(t, lifecycle.DeprecatedSupportEnd)
 	assert.Nil(t, lifecycle.ExtendedSupportEnd)
-	assert.Equal(t, terminal.Format("2006-01-02"), lifecycle.EOLDate.Format("2006-01-02"))
+	assert.Equal(t, support.Format("2006-01-02"), lifecycle.EOLDate.Format("2006-01-02"))
 	assert.Equal(t, support.Format("2006-01-02"), lifecycle.DeprecationDate.Format("2006-01-02"))
 	assert.Equal(t, terminal.Format("2006-01-02"), lifecycle.DeprecatedSupportEnd.Format("2006-01-02"))
 	assert.True(t, lifecycle.IsSupported)
@@ -402,7 +402,7 @@ func TestDeclarativeSchemaAdapter_LambdaPreservesActionableAndTerminalDates(t *t
 	assert.False(t, lifecycle.IsEOL)
 }
 
-func TestDeclarativeSchemaAdapter_LambdaPastActionableDateIsDeprecatedSupport(t *testing.T) {
+func TestDeclarativeSchemaAdapter_LambdaPastActionableDateIsEOL(t *testing.T) {
 	adapter := lambdaActionableEOLAdapter(t)
 
 	cycle := &ProductCycle{
@@ -415,11 +415,15 @@ func TestDeclarativeSchemaAdapter_LambdaPastActionableDateIsDeprecatedSupport(t 
 	lifecycle, err := adapter.AdaptCycle(cycle)
 	require.NoError(t, err)
 
-	assert.True(t, lifecycle.IsSupported)
+	assert.False(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
-	assert.False(t, lifecycle.IsEOL)
-	assert.True(t, lifecycle.IsDeprecatedSupport)
+	assert.True(t, lifecycle.IsEOL)
+	assert.False(t, lifecycle.IsDeprecatedSupport)
 	assert.False(t, lifecycle.IsExtendedSupport)
+	require.NotNil(t, lifecycle.EOLDate)
+	require.NotNil(t, lifecycle.DeprecatedSupportEnd)
+	assert.Equal(t, cycle.Support, lifecycle.EOLDate.Format("2006-01-02"))
+	assert.Equal(t, cycle.EOL, lifecycle.DeprecatedSupportEnd.Format("2006-01-02"))
 }
 
 func TestDeclarativeSchemaAdapter_EKSCurrentVersion(t *testing.T) {
