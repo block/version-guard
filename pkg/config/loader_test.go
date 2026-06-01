@@ -158,6 +158,23 @@ func TestLoadResourcesConfig_EmbeddedDefault(t *testing.T) {
 		assert.NotEmpty(t, r.Inventory.RequiredMappings["resource_id"],
 			"resource %q missing required_mappings.resource_id", r.ID)
 	}
+
+	byID := make(map[string]ResourceConfig, len(cfg.Resources))
+	for _, r := range cfg.Resources {
+		byID[r.ID] = r
+	}
+
+	eks := byID["eks"]
+	require.NotNil(t, eks.EOL.Lifecycle)
+	assert.Equal(t, "extendedSupport", eks.EOL.Lifecycle.EOLDate.Field,
+		"EKS eol_date must stay on extendedSupport so the terminal EOL is end of extended support")
+
+	lambda := byID["lambda"]
+	require.NotNil(t, lambda.EOL.Lifecycle)
+	assert.Equal(t, "support", lambda.EOL.Lifecycle.EOLDate.Field,
+		"Lambda eol_date must stay on support so the actionable runtime EOL drives RED status")
+	assert.Equal(t, "eol", lambda.EOL.Lifecycle.DeprecatedSupportEnd.Field,
+		"Lambda deprecated_support_end should preserve AWS's later terminal date")
 }
 
 // TestLoadResourcesConfig_OverridePath asserts the override semantic:

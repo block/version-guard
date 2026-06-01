@@ -139,15 +139,16 @@ eol:
   lifecycle:
     deprecation_date:
       field: support
-    extended_support_end:
+    deprecated_support_end:
       field: eol
+    deprecated_window: deprecated_support
     eol_date:
       field: support
 ```
 
 For `python3.8` (`support: 2024-10-14`, `eol: 2027-03-03`), the emitted
-`EOLDate` is `2024-10-14`, while `ExtendedSupportEnd` preserves the later
-AWS terminal date for downstream consumers that need it. Dates after
+`EOLDate` is `2024-10-14`, while `DeprecatedSupportEnd` preserves the
+later AWS terminal date for downstream consumers that need it. Dates after
 `support` become true EOL / RED.
 
 ---
