@@ -145,7 +145,7 @@ func TestBuilder_JSONWireShape(t *testing.T) {
 
 // TestBuilder_CurrentSchemaBreakWireShape locks in the current schema:
 //
-//   - snapshot.Version is "v3"
+//   - snapshot.Version is "v4"
 //   - top-level Finding JSON no longer carries ResourceName,
 //     CloudAccountID, CloudRegion, or Recommendation
 //   - those values flow through Finding.Extra under the YAML logical
@@ -157,6 +157,7 @@ func TestBuilder_JSONWireShape(t *testing.T) {
 func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 	standardSupportEnd := time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)
 	extendedSupportEnd := time.Date(2027, time.February, 28, 0, 0, 0, 0, time.UTC)
+	latestReleaseDate := time.Date(2025, time.February, 13, 0, 0, 0, 0, time.UTC)
 	snap := NewBuilder().
 		AddFindings(types.ResourceTypeAurora, []*types.Finding{
 			{
@@ -171,10 +172,12 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 					"account_id": "123456789012",
 					"region":     "us-east-1",
 				},
-				LifecycleDetails: types.LifecycleDetails{
+				EOL: types.LifecycleDetails{
 					StandardSupportEnd: &standardSupportEnd,
 					ExtendedSupportEnd: &extendedSupportEnd,
 					EOLDate:            &extendedSupportEnd,
+					ActionableDate:     &standardSupportEnd,
+					LatestReleaseDate:  &latestReleaseDate,
 					Version:            "13",
 					Engine:             "aurora-postgresql",
 					Source:             "endoflife-date-api",
@@ -186,7 +189,7 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 		}).
 		Build()
 
-	assert.Equal(t, "v3", snap.Version,
+	assert.Equal(t, "v4", snap.Version,
 		"snapshot schema must advertise v3 once recommendation is removed")
 
 	raw, err := json.Marshal(snap)
@@ -209,23 +212,28 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 	for _, banned := range []string{"ResourceName", "CloudAccountID", "CloudRegion", "Recommendation"} {
 		_, present := finding[banned]
 		assert.False(t, present,
-			"v3 finding JSON must not contain top-level %q", banned)
+			"v4 finding JSON must not contain top-level %q", banned)
 	}
 
 	// The values now live in Extra under their YAML logical names.
 	extra, ok := finding["Extra"].(map[string]any)
-	require.True(t, ok, "v3 finding JSON must carry an Extra map")
+	require.True(t, ok, "v4 finding JSON must carry an Extra map")
 	assert.Equal(t, "c1", extra["name"])
 	assert.Equal(t, "123456789012", extra["account_id"])
 	assert.Equal(t, "us-east-1", extra["region"])
 
-	lifecycleDetails, ok := finding["lifecycle_details"].(map[string]any)
-	require.True(t, ok, "v3 finding JSON must carry lifecycle_details for downstream enrichment")
-	assert.Equal(t, "2024-02-29T00:00:00Z", lifecycleDetails["standard_support_end"])
-	assert.Equal(t, "2027-02-28T00:00:00Z", lifecycleDetails["extended_support_end"])
-	assert.Equal(t, "2027-02-28T00:00:00Z", lifecycleDetails["eol_date"])
-	assert.Equal(t, "13", lifecycleDetails["version"])
-	assert.Equal(t, "aurora-postgresql", lifecycleDetails["engine"])
-	assert.Equal(t, "endoflife-date-api", lifecycleDetails["source"])
-	assert.Equal(t, true, lifecycleDetails["is_extended_support"])
+	_, hasSimpleEOLDate := finding["EOLDate"]
+	assert.False(t, hasSimpleEOLDate, "v4 finding JSON must not expose EOL as a simple date")
+
+	eol, ok := finding["eol"].(map[string]any)
+	require.True(t, ok, "v4 finding JSON must carry an eol block for downstream enrichment")
+	assert.Equal(t, "2024-02-29T00:00:00Z", eol["standard_support_end"])
+	assert.Equal(t, "2027-02-28T00:00:00Z", eol["extended_support_end"])
+	assert.Equal(t, "2027-02-28T00:00:00Z", eol["eol_date"])
+	assert.Equal(t, "2024-02-29T00:00:00Z", eol["actionable_date"])
+	assert.Equal(t, "2025-02-13T00:00:00Z", eol["latest_release_date"])
+	assert.Equal(t, "13", eol["version"])
+	assert.Equal(t, "aurora-postgresql", eol["engine"])
+	assert.Equal(t, "endoflife-date-api", eol["source"])
+	assert.Equal(t, true, eol["is_extended_support"])
 }

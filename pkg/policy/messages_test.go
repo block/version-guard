@@ -130,8 +130,21 @@ func TestGetMessage_Yellow_ApproachingDeprecation(t *testing.T) {
 	lc := &types.VersionLifecycle{DeprecationDate: &soon}
 
 	got := p.GetMessage(res, lc, types.StatusYellow)
-	assert.Contains(t, got, "will be deprecated")
+	assert.Contains(t, got, "will leave standard support")
 	assert.Regexp(t, `\d+ days`, got)
+}
+
+func TestGetMessage_Yellow_UsesFirstLifecycleDate(t *testing.T) {
+	p := NewDefaultPolicy()
+	res := &types.Resource{Engine: "mysql", CurrentVersion: "8.0.41"}
+	standardEnd := time.Now().Add(30*24*time.Hour + time.Hour)
+	terminalEOL := time.Now().Add(3 * 365 * 24 * time.Hour)
+	lc := &types.VersionLifecycle{DeprecationDate: &standardEnd, EOLDate: &terminalEOL}
+
+	got := p.GetMessage(res, lc, types.StatusYellow)
+	assert.Contains(t, got, "will leave standard support")
+	assert.Contains(t, got, standardEnd.Format("Jan 2, 2006"))
+	assert.NotContains(t, got, terminalEOL.Format("Jan 2, 2006"))
 }
 
 func TestGetMessage_Yellow_Fallback(t *testing.T) {

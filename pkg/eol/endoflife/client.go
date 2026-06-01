@@ -46,7 +46,7 @@ type ProductCycle struct {
 	Support           any    `json:"support"`           // End of standard support (YYYY-MM-DD or boolean)
 	EOL               any    `json:"eol"`               // End of life date (YYYY-MM-DD or boolean)
 	ExtendedSupport   any    `json:"extendedSupport"`   // Extended support availability (boolean or date)
-	LTS               bool   `json:"lts"`               // Long-term support flag
+	LTS               any    `json:"lts"`               // Long-term support flag or start date
 	Latest            string `json:"latest"`            // Latest patch version
 	LatestReleaseDate string `json:"latestReleaseDate"` // Latest patch release date
 }

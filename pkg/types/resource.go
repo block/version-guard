@@ -85,8 +85,17 @@ type VersionLifecycle struct {
 	// ExtendedSupportEnd is when extended support ends (if applicable)
 	ExtendedSupportEnd *time.Time
 
+	// DeprecatedSupportEnd is when non-paid deprecated/security support ends (if applicable)
+	DeprecatedSupportEnd *time.Time
+
 	// DeprecationDate is when this version is deprecated
 	DeprecationDate *time.Time
+
+	// LatestReleaseDate is when the current latest patch for this cycle was released
+	LatestReleaseDate *time.Time
+
+	// LTSDate is when this version entered long-term support, if endoflife.date provides a date
+	LTSDate *time.Time
 
 	// FetchedAt is the timestamp when this lifecycle data was fetched
 	FetchedAt time.Time
@@ -136,11 +145,17 @@ type Finding struct {
 	// attributes without a schema change.
 	Extra map[string]string `json:",omitempty"`
 
-	// LifecycleDetails preserves structured lifecycle status for downstream enrichment.
-	LifecycleDetails LifecycleDetails `json:"lifecycle_details"`
+	// EOL preserves structured lifecycle status for downstream enrichment.
+	EOL LifecycleDetails `json:"eol"`
 
-	// EOLDate is when the current version reaches End-of-Life
-	EOLDate *time.Time
+	// LifecycleDetails preserves the same structured lifecycle status for
+	// in-process consumers. The snapshot wire format uses EOL instead of a
+	// second lifecycle_details block.
+	LifecycleDetails LifecycleDetails `json:"-"`
+
+	// EOLDate is when the current version reaches End-of-Life. Kept for
+	// in-process compatibility; snapshots expose the structured EOL block.
+	EOLDate *time.Time `json:"-"`
 
 	// DetectedAt is when this finding was first detected
 	DetectedAt time.Time

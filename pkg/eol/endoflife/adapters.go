@@ -102,6 +102,10 @@ func (a *StandardSchemaAdapter) deriveBoundaries(dates lifecycleDates) derivedBo
 		switch {
 		case dates.support != nil:
 			b.standardEnd = dates.support
+			if dates.eol != nil && dates.eol.After(*dates.support) &&
+				dates.eol.Before(*dates.extendedSupport) {
+				b.deprecatedSupportEnd = dates.eol
+			}
 		case dates.eol != nil:
 			// AWS pattern: no `support` field — `eol` is end of standard support
 			// because `extendedSupport` is the real terminal date.
@@ -181,11 +185,13 @@ func (a *StandardSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.VersionL
 			lifecycle.ReleaseDate = &releaseDate
 		}
 	}
+	applyCycleMetadataDates(lifecycle, cycle)
 
 	dates := a.parseCycleDates(cycle)
 	b := a.deriveBoundaries(dates)
 
 	lifecycle.DeprecationDate = b.standardEnd
+	lifecycle.DeprecatedSupportEnd = b.deprecatedSupportEnd
 	lifecycle.ExtendedSupportEnd = b.extendedEnd
 	lifecycle.EOLDate = b.trueEOL
 
@@ -202,10 +208,11 @@ const (
 	lifecycleFieldSupport         = "support"
 	lifecycleFieldExtendedSupport = "extendedSupport"
 
-	lifecycleActionExtendedSupport = "extended_support"
-	lifecycleActionUnsupported     = "unsupported"
-	lifecycleActionEOL             = "eol"
-	lifecycleActionSupported       = "supported"
+	lifecycleActionExtendedSupport   = "extended_support"
+	lifecycleActionDeprecatedSupport = "deprecated_support"
+	lifecycleActionUnsupported       = "unsupported"
+	lifecycleActionEOL               = "eol"
+	lifecycleActionSupported         = "supported"
 )
 
 // DeclarativeLifecycleConfig lets YAML describe product-specific
@@ -214,11 +221,12 @@ const (
 // how to classify the post-standard-support windows.
 //
 // Supported field names: support, eol, extendedSupport.
-// Supported actions: extended_support, unsupported, eol, supported.
+// Supported actions: extended_support, deprecated_support, unsupported, eol, supported.
 type DeclarativeLifecycleConfig struct {
-	DeprecationDate    LifecycleDateSource `yaml:"deprecation_date"`
-	ExtendedSupportEnd LifecycleDateSource `yaml:"extended_support_end"`
-	EOLDate            LifecycleDateSource `yaml:"eol_date"`
+	DeprecationDate      LifecycleDateSource `yaml:"deprecation_date"`
+	DeprecatedSupportEnd LifecycleDateSource `yaml:"deprecated_support_end"`
+	ExtendedSupportEnd   LifecycleDateSource `yaml:"extended_support_end"`
+	EOLDate              LifecycleDateSource `yaml:"eol_date"`
 
 	// DeprecatedWindow is applied after DeprecationDate and before
 	// ExtendedSupportEnd. Most AWS paid/deprecated support windows use
@@ -263,9 +271,10 @@ func ValidateDeclarativeLifecycleConfig(config *DeclarativeLifecycleConfig) erro
 	}
 
 	for name, source := range map[string]LifecycleDateSource{
-		"deprecation_date":     config.DeprecationDate,
-		"extended_support_end": config.ExtendedSupportEnd,
-		"eol_date":             config.EOLDate,
+		"deprecation_date":       config.DeprecationDate,
+		"deprecated_support_end": config.DeprecatedSupportEnd,
+		"extended_support_end":   config.ExtendedSupportEnd,
+		"eol_date":               config.EOLDate,
 	} {
 		if err := validateLifecycleDateSource(source); err != nil {
 			return errors.Wrapf(err, "%s", name)
@@ -280,6 +289,7 @@ func ValidateDeclarativeLifecycleConfig(config *DeclarativeLifecycleConfig) erro
 	}
 
 	if config.DeprecationDate.Field == "" &&
+		config.DeprecatedSupportEnd.Field == "" &&
 		config.ExtendedSupportEnd.Field == "" &&
 		config.EOLDate.Field == "" {
 		return errors.New("at least one lifecycle date source is required")
@@ -319,7 +329,8 @@ func validateLifecycleAction(action string, allowEmpty bool) error {
 		return nil
 	}
 	switch action {
-	case lifecycleActionExtendedSupport, lifecycleActionUnsupported, lifecycleActionEOL, lifecycleActionSupported:
+	case lifecycleActionExtendedSupport, lifecycleActionDeprecatedSupport,
+		lifecycleActionUnsupported, lifecycleActionEOL, lifecycleActionSupported:
 		return nil
 	default:
 		return errors.Errorf("unsupported action %q", action)
@@ -341,8 +352,10 @@ func (a *DeclarativeSchemaAdapter) AdaptCycle(cycle *ProductCycle) (*types.Versi
 			lifecycle.ReleaseDate = &releaseDate
 		}
 	}
+	applyCycleMetadataDates(lifecycle, cycle)
 
 	lifecycle.DeprecationDate = a.parseDateSource(cycle, a.config.DeprecationDate)
+	lifecycle.DeprecatedSupportEnd = a.parseDateSource(cycle, a.config.DeprecatedSupportEnd)
 	lifecycle.ExtendedSupportEnd = a.parseDateSource(cycle, a.config.ExtendedSupportEnd)
 	lifecycle.EOLDate = a.parseDateSource(cycle, a.config.EOLDate)
 
@@ -391,14 +404,33 @@ func cycleFieldValue(cycle *ProductCycle, field string) (any, bool) {
 	}
 }
 
+func applyCycleMetadataDates(lifecycle *types.VersionLifecycle, cycle *ProductCycle) {
+	if cycle.LatestReleaseDate != "" {
+		if latestReleaseDate, err := parseDate(cycle.LatestReleaseDate); err == nil {
+			lifecycle.LatestReleaseDate = &latestReleaseDate
+		}
+	}
+
+	if dateStr := anyToDateString(cycle.LTS); dateStr != "" {
+		if ltsDate, err := parseDate(dateStr); err == nil {
+			lifecycle.LTSDate = &ltsDate
+		}
+	}
+}
+
 func (a *DeclarativeSchemaAdapter) classify(lifecycle *types.VersionLifecycle) {
 	now := time.Now()
 
 	switch {
 	case lifecycle.EOLDate != nil && now.After(*lifecycle.EOLDate):
 		applyLifecycleAction(lifecycle, lifecycleActionEOL)
+	case lifecycle.DeprecatedSupportEnd != nil && now.After(*lifecycle.DeprecatedSupportEnd):
+		applyLifecycleAction(lifecycle, lifecycleActionUnsupported)
 	case lifecycle.ExtendedSupportEnd != nil && now.After(*lifecycle.ExtendedSupportEnd):
 		applyLifecycleAction(lifecycle, defaultLifecycleAction(a.config.PastExtendedSupport, lifecycleActionUnsupported))
+	case lifecycle.DeprecationDate != nil && lifecycle.DeprecatedSupportEnd != nil &&
+		now.After(*lifecycle.DeprecationDate) && now.Before(*lifecycle.DeprecatedSupportEnd):
+		applyLifecycleAction(lifecycle, defaultLifecycleAction(a.config.DeprecatedWindow, lifecycleActionUnsupported))
 	case lifecycle.DeprecationDate != nil && lifecycle.ExtendedSupportEnd != nil &&
 		now.After(*lifecycle.DeprecationDate) && now.Before(*lifecycle.ExtendedSupportEnd):
 		applyLifecycleAction(lifecycle, defaultLifecycleAction(a.config.DeprecatedWindow, lifecycleActionUnsupported))
@@ -422,6 +454,11 @@ func applyLifecycleAction(lifecycle *types.VersionLifecycle, action string) {
 		lifecycle.IsSupported = true
 		lifecycle.IsDeprecated = true
 		lifecycle.IsExtendedSupport = true
+	case lifecycleActionDeprecatedSupport:
+		lifecycle.IsSupported = true
+		lifecycle.IsDeprecated = true
+		lifecycle.IsDeprecatedSupport = true
+		lifecycle.IsExtendedSupport = false
 	case lifecycleActionUnsupported:
 		lifecycle.IsSupported = false
 		lifecycle.IsDeprecated = true

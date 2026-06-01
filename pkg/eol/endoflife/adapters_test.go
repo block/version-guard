@@ -14,10 +14,12 @@ func TestStandardSchemaAdapter_CurrentVersion(t *testing.T) {
 	// Future dates to ensure version is current
 	futureYear := time.Now().Year() + 2
 	cycle := &ProductCycle{
-		Cycle:       "16.1",
-		ReleaseDate: "2024-01-15",
-		Support:     time.Date(futureYear, 1, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
-		EOL:         time.Date(futureYear+2, 1, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+		Cycle:             "16.1",
+		ReleaseDate:       "2024-01-15",
+		LatestReleaseDate: "2024-04-15",
+		LTS:               "2024-06-15",
+		Support:           time.Date(futureYear, 1, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
+		EOL:               time.Date(futureYear+2, 1, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02"),
 	}
 
 	lifecycle, err := adapter.AdaptCycle(cycle)
@@ -33,8 +35,12 @@ func TestStandardSchemaAdapter_CurrentVersion(t *testing.T) {
 
 	// Verify dates
 	assert.NotNil(t, lifecycle.ReleaseDate)
+	assert.NotNil(t, lifecycle.LatestReleaseDate)
+	assert.NotNil(t, lifecycle.LTSDate)
 	assert.NotNil(t, lifecycle.DeprecationDate)
 	assert.NotNil(t, lifecycle.EOLDate)
+	assert.Equal(t, "2024-04-15", lifecycle.LatestReleaseDate.Format("2006-01-02"))
+	assert.Equal(t, "2024-06-15", lifecycle.LTSDate.Format("2006-01-02"))
 }
 
 func TestStandardSchemaAdapter_DeprecatedSupportWindow(t *testing.T) {
@@ -244,6 +250,33 @@ func TestStandardSchemaAdapter_ExtendedSupportOverridesPastEOL(t *testing.T) {
 	assert.True(t, lifecycle.IsDeprecated)
 }
 
+func TestStandardSchemaAdapter_PreservesIntermediateSupportDate(t *testing.T) {
+	adapter := &StandardSchemaAdapter{}
+
+	standardEnd := time.Now().AddDate(0, 0, 60)
+	securityEnd := time.Now().AddDate(0, 0, 120)
+	extendedEnd := time.Now().AddDate(3, 0, 0)
+	cycle := &ProductCycle{
+		Cycle:           "8.0.41",
+		Support:         standardEnd.Format("2006-01-02"),
+		EOL:             securityEnd.Format("2006-01-02"),
+		ExtendedSupport: extendedEnd.Format("2006-01-02"),
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+	require.NotNil(t, lifecycle.DeprecationDate)
+	require.NotNil(t, lifecycle.DeprecatedSupportEnd)
+	require.NotNil(t, lifecycle.ExtendedSupportEnd)
+	require.NotNil(t, lifecycle.EOLDate)
+	assert.Equal(t, standardEnd.Format("2006-01-02"), lifecycle.DeprecationDate.Format("2006-01-02"))
+	assert.Equal(t, securityEnd.Format("2006-01-02"), lifecycle.DeprecatedSupportEnd.Format("2006-01-02"))
+	assert.Equal(t, extendedEnd.Format("2006-01-02"), lifecycle.ExtendedSupportEnd.Format("2006-01-02"))
+	assert.Equal(t, extendedEnd.Format("2006-01-02"), lifecycle.EOLDate.Format("2006-01-02"))
+	assert.True(t, lifecycle.IsSupported)
+	assert.False(t, lifecycle.IsDeprecated)
+}
+
 func eksDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
 	t.Helper()
 
@@ -265,9 +298,10 @@ func lambdaActionableEOLAdapter(t *testing.T) *DeclarativeSchemaAdapter {
 	t.Helper()
 
 	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
-		DeprecationDate:    LifecycleDateSource{Field: lifecycleFieldSupport},
-		ExtendedSupportEnd: LifecycleDateSource{Field: lifecycleFieldEOL},
-		EOLDate:            LifecycleDateSource{Field: lifecycleFieldSupport},
+		DeprecationDate:      LifecycleDateSource{Field: lifecycleFieldSupport},
+		DeprecatedSupportEnd: LifecycleDateSource{Field: lifecycleFieldEOL},
+		EOLDate:              LifecycleDateSource{Field: lifecycleFieldEOL},
+		DeprecatedWindow:     lifecycleActionDeprecatedSupport,
 	})
 	require.NoError(t, err)
 	return adapter
@@ -296,6 +330,7 @@ func TestStandardSchemaAdapter_LambdaDeprecatedSupportWindow(t *testing.T) {
 	assert.False(t, lifecycle.IsExtendedSupport)
 	assert.False(t, lifecycle.IsEOL)
 	assert.NotNil(t, lifecycle.DeprecationDate)
+	assert.NotNil(t, lifecycle.DeprecatedSupportEnd)
 	assert.Nil(t, lifecycle.ExtendedSupportEnd)
 	assert.NotNil(t, lifecycle.EOLDate)
 }
@@ -340,7 +375,7 @@ func TestStandardSchemaAdapter_LambdaCurrentStandardSupport(t *testing.T) {
 	assert.False(t, lifecycle.IsEOL)
 }
 
-func TestDeclarativeSchemaAdapter_LambdaUsesSupportAsActionableEOL(t *testing.T) {
+func TestDeclarativeSchemaAdapter_LambdaPreservesActionableAndTerminalDates(t *testing.T) {
 	adapter := lambdaActionableEOLAdapter(t)
 
 	support := time.Now().AddDate(0, 0, 60)
@@ -357,16 +392,17 @@ func TestDeclarativeSchemaAdapter_LambdaUsesSupportAsActionableEOL(t *testing.T)
 
 	require.NotNil(t, lifecycle.EOLDate)
 	require.NotNil(t, lifecycle.DeprecationDate)
-	require.NotNil(t, lifecycle.ExtendedSupportEnd)
-	assert.Equal(t, support.Format("2006-01-02"), lifecycle.EOLDate.Format("2006-01-02"))
+	require.NotNil(t, lifecycle.DeprecatedSupportEnd)
+	assert.Nil(t, lifecycle.ExtendedSupportEnd)
+	assert.Equal(t, terminal.Format("2006-01-02"), lifecycle.EOLDate.Format("2006-01-02"))
 	assert.Equal(t, support.Format("2006-01-02"), lifecycle.DeprecationDate.Format("2006-01-02"))
-	assert.Equal(t, terminal.Format("2006-01-02"), lifecycle.ExtendedSupportEnd.Format("2006-01-02"))
+	assert.Equal(t, terminal.Format("2006-01-02"), lifecycle.DeprecatedSupportEnd.Format("2006-01-02"))
 	assert.True(t, lifecycle.IsSupported)
 	assert.False(t, lifecycle.IsDeprecated)
 	assert.False(t, lifecycle.IsEOL)
 }
 
-func TestDeclarativeSchemaAdapter_LambdaPastActionableEOLIsEOL(t *testing.T) {
+func TestDeclarativeSchemaAdapter_LambdaPastActionableDateIsDeprecatedSupport(t *testing.T) {
 	adapter := lambdaActionableEOLAdapter(t)
 
 	cycle := &ProductCycle{
@@ -379,10 +415,10 @@ func TestDeclarativeSchemaAdapter_LambdaPastActionableEOLIsEOL(t *testing.T) {
 	lifecycle, err := adapter.AdaptCycle(cycle)
 	require.NoError(t, err)
 
-	assert.False(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsSupported)
 	assert.True(t, lifecycle.IsDeprecated)
-	assert.True(t, lifecycle.IsEOL)
-	assert.False(t, lifecycle.IsDeprecatedSupport)
+	assert.False(t, lifecycle.IsEOL)
+	assert.True(t, lifecycle.IsDeprecatedSupport)
 	assert.False(t, lifecycle.IsExtendedSupport)
 }
 

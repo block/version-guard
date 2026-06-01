@@ -96,18 +96,12 @@ func (p *DefaultPolicy) isYellowStatus(lifecycle *types.VersionLifecycle) bool {
 		return true
 	}
 
-	// Approaching EOL (within warning window)
-	if lifecycle.EOLDate != nil {
-		daysUntilEOL := int(time.Until(*lifecycle.EOLDate).Hours() / 24)
-		if daysUntilEOL > 0 && daysUntilEOL <= p.EOLWarningDays {
-			return true
-		}
-	}
-
-	// Approaching deprecation
-	if lifecycle.DeprecationDate != nil {
-		daysUntilDeprecation := int(time.Until(*lifecycle.DeprecationDate).Hours() / 24)
-		if daysUntilDeprecation > 0 && daysUntilDeprecation <= p.EOLWarningDays {
+	// Approaching the first actionable lifecycle boundary. Later support
+	// dates are still exposed in the finding's eol block, but they should not
+	// create additional yellow warning windows before the first date arrives.
+	if warningDate, ok := firstFutureLifecycleDate(lifecycle); ok {
+		daysUntilWarning := int(time.Until(*warningDate).Hours() / 24)
+		if daysUntilWarning > 0 && daysUntilWarning <= p.EOLWarningDays {
 			return true
 		}
 	}
@@ -158,12 +152,16 @@ func (p *DefaultPolicy) getRedMessage(resource *types.Resource, lifecycle *types
 
 func (p *DefaultPolicy) getYellowMessage(resource *types.Resource, lifecycle *types.VersionLifecycle) string {
 	if lifecycle.IsDeprecatedSupport {
-		if lifecycle.EOLDate != nil {
+		end := lifecycle.DeprecatedSupportEnd
+		if end == nil {
+			end = lifecycle.EOLDate
+		}
+		if end != nil {
 			return fmt.Sprintf("%s %s for %s is in deprecated support until %s",
 				versionSubject(resource),
 				resource.CurrentVersion,
 				resource.Engine,
-				lifecycle.EOLDate.Format("Jan 2, 2006"))
+				end.Format("Jan 2, 2006"))
 		}
 		return fmt.Sprintf("%s %s for %s is in deprecated support",
 			versionSubject(resource),
@@ -177,25 +175,21 @@ func (p *DefaultPolicy) getYellowMessage(resource *types.Resource, lifecycle *ty
 			resource.Engine)
 	}
 
-	if lifecycle.EOLDate != nil {
-		daysUntilEOL := int(time.Until(*lifecycle.EOLDate).Hours() / 24)
-		if daysUntilEOL > 0 && daysUntilEOL <= p.EOLWarningDays {
+	if warningDate, ok := firstFutureLifecycleDate(lifecycle); ok {
+		daysUntilWarning := int(time.Until(*warningDate).Hours() / 24)
+		if daysUntilWarning > 0 && daysUntilWarning <= p.EOLWarningDays {
+			if lifecycle.DeprecationDate != nil && warningDate.Equal(*lifecycle.DeprecationDate) {
+				return fmt.Sprintf("Version %s of %s will leave standard support in %d days (on %s)",
+					resource.CurrentVersion,
+					resource.Engine,
+					daysUntilWarning,
+					warningDate.Format("Jan 2, 2006"))
+			}
 			return fmt.Sprintf("Version %s of %s will reach End-of-Life in %d days (on %s)",
 				resource.CurrentVersion,
 				resource.Engine,
-				daysUntilEOL,
-				lifecycle.EOLDate.Format("Jan 2, 2006"))
-		}
-	}
-
-	if lifecycle.DeprecationDate != nil {
-		daysUntilDeprecation := int(time.Until(*lifecycle.DeprecationDate).Hours() / 24)
-		if daysUntilDeprecation > 0 && daysUntilDeprecation <= p.EOLWarningDays {
-			return fmt.Sprintf("Version %s of %s will be deprecated in %d days (on %s)",
-				resource.CurrentVersion,
-				resource.Engine,
-				daysUntilDeprecation,
-				lifecycle.DeprecationDate.Format("Jan 2, 2006"))
+				daysUntilWarning,
+				warningDate.Format("Jan 2, 2006"))
 		}
 	}
 
@@ -224,6 +218,25 @@ func versionSubject(resource *types.Resource) string {
 
 func isLambda(resource *types.Resource) bool {
 	return resource.Engine == "aws-lambda" || strings.EqualFold(resource.Type.String(), "lambda")
+}
+
+func firstFutureLifecycleDate(lifecycle *types.VersionLifecycle) (*time.Time, bool) {
+	var first *time.Time
+	now := time.Now()
+	for _, date := range []*time.Time{
+		lifecycle.DeprecationDate,
+		lifecycle.DeprecatedSupportEnd,
+		lifecycle.ExtendedSupportEnd,
+		lifecycle.EOLDate,
+	} {
+		if date == nil || !date.After(now) {
+			continue
+		}
+		if first == nil || date.Before(*first) {
+			first = date
+		}
+	}
+	return first, first != nil
 }
 
 // versionMatches checks if a resource version matches a lifecycle version.
