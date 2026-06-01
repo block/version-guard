@@ -261,6 +261,18 @@ func eksDeclarativeAdapter(t *testing.T) *DeclarativeSchemaAdapter {
 	return adapter
 }
 
+func lambdaActionableEOLAdapter(t *testing.T) *DeclarativeSchemaAdapter {
+	t.Helper()
+
+	adapter, err := NewDeclarativeSchemaAdapter(&DeclarativeLifecycleConfig{
+		DeprecationDate:    LifecycleDateSource{Field: lifecycleFieldSupport},
+		ExtendedSupportEnd: LifecycleDateSource{Field: lifecycleFieldEOL},
+		EOLDate:            LifecycleDateSource{Field: lifecycleFieldSupport},
+	})
+	require.NoError(t, err)
+	return adapter
+}
+
 func TestStandardSchemaAdapter_LambdaDeprecatedSupportWindow(t *testing.T) {
 	adapter := &StandardSchemaAdapter{}
 
@@ -326,6 +338,52 @@ func TestStandardSchemaAdapter_LambdaCurrentStandardSupport(t *testing.T) {
 	assert.False(t, lifecycle.IsDeprecated)
 	assert.False(t, lifecycle.IsExtendedSupport)
 	assert.False(t, lifecycle.IsEOL)
+}
+
+func TestDeclarativeSchemaAdapter_LambdaUsesSupportAsActionableEOL(t *testing.T) {
+	adapter := lambdaActionableEOLAdapter(t)
+
+	support := time.Now().AddDate(0, 0, 60)
+	terminal := time.Now().AddDate(1, 0, 0)
+	cycle := &ProductCycle{
+		Cycle:       "python3.10",
+		ReleaseDate: "2023-04-18",
+		Support:     support.Format("2006-01-02"),
+		EOL:         terminal.Format("2006-01-02"),
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	require.NotNil(t, lifecycle.EOLDate)
+	require.NotNil(t, lifecycle.DeprecationDate)
+	require.NotNil(t, lifecycle.ExtendedSupportEnd)
+	assert.Equal(t, support.Format("2006-01-02"), lifecycle.EOLDate.Format("2006-01-02"))
+	assert.Equal(t, support.Format("2006-01-02"), lifecycle.DeprecationDate.Format("2006-01-02"))
+	assert.Equal(t, terminal.Format("2006-01-02"), lifecycle.ExtendedSupportEnd.Format("2006-01-02"))
+	assert.True(t, lifecycle.IsSupported)
+	assert.False(t, lifecycle.IsDeprecated)
+	assert.False(t, lifecycle.IsEOL)
+}
+
+func TestDeclarativeSchemaAdapter_LambdaPastActionableEOLIsEOL(t *testing.T) {
+	adapter := lambdaActionableEOLAdapter(t)
+
+	cycle := &ProductCycle{
+		Cycle:       "python3.8",
+		ReleaseDate: "2019-11-18",
+		Support:     time.Now().AddDate(0, -1, 0).Format("2006-01-02"),
+		EOL:         time.Now().AddDate(1, 0, 0).Format("2006-01-02"),
+	}
+
+	lifecycle, err := adapter.AdaptCycle(cycle)
+	require.NoError(t, err)
+
+	assert.False(t, lifecycle.IsSupported)
+	assert.True(t, lifecycle.IsDeprecated)
+	assert.True(t, lifecycle.IsEOL)
+	assert.False(t, lifecycle.IsDeprecatedSupport)
+	assert.False(t, lifecycle.IsExtendedSupport)
 }
 
 func TestDeclarativeSchemaAdapter_EKSCurrentVersion(t *testing.T) {

@@ -318,11 +318,18 @@ resources:
     eol:
       provider: endoflife-date
       product: aws-lambda
-      # Lambda uses the standard API shape: `support` marks the start of
-      # deprecated runtime support and `eol` is the terminal date. There is
-      # no `extendedSupport` field, so the standard adapter classifies that
-      # window as deprecated support, not paid extended support.
-      schema: standard
+      # Lambda's `support` date is the first/actionable runtime EOL date
+      # shown to service owners. The upstream `eol` date is AWS's later
+      # terminal deprecated-support date, so keep it as structured lifecycle
+      # detail but do not use it as the primary EOLDate.
+      schema: declarative
+      lifecycle:
+        deprecation_date:
+          field: support
+        extended_support_end:
+          field: eol
+        eol_date:
+          field: support
 
   # To add a new resource type, follow skills/add-version-guard-resource.
   # Standalone copy-paste templates live in skills/add-version-guard-resource/examples/.
