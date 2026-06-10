@@ -2,8 +2,11 @@ package scan
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+
+	"go.temporal.io/api/serviceerror"
 
 	"github.com/block/Version-Guard/pkg/telemetry"
 	"github.com/block/Version-Guard/pkg/types"
@@ -65,6 +68,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Source:        telemetry.ScanSourceHTTP,
 	})
 	if err != nil {
+		if isScanAlreadyRunning(err) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -82,4 +89,9 @@ func writeJSON(w http.ResponseWriter, status int, body interface{}) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func isScanAlreadyRunning(err error) bool {
+	var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+	return errors.As(err, &alreadyStarted)
 }

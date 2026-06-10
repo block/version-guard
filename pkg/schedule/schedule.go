@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 
@@ -77,6 +78,7 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			Jitter:          cfg.Jitter,
 		},
 		Action: &client.ScheduleWorkflowAction{
+			ID:       orchestrator.ActiveScanWorkflowID,
 			Workflow: orchestrator.OrchestratorWorkflow,
 			Args: []interface{}{orchestrator.WorkflowInput{
 				ResourceTypes:     cfg.ResourceTypes,
@@ -86,7 +88,8 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			TaskQueue:                cfg.TaskQueue,
 			WorkflowExecutionTimeout: 2 * time.Hour,
 		},
-		Paused: cfg.Paused,
+		Overlap: enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
+		Paused:  cfg.Paused,
 	}
 
 	_, err := m.scheduleClient.Create(ctx, opts)
@@ -117,8 +120,9 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 	}
 	existingCrons := existingSpec.CronExpressions
 	specMatches := len(existingCrons) == 1 && existingCrons[0] == cfg.CronExpression && existingSpec.Jitter == cfg.Jitter
+	overlapMatches := desc.Schedule.Policy != nil && desc.Schedule.Policy.Overlap == enumspb.SCHEDULE_OVERLAP_POLICY_SKIP
 	actionMatches := scheduleActionMatches(desc.Schedule.Action, &cfg)
-	if specMatches && actionMatches {
+	if specMatches && overlapMatches && actionMatches {
 		fmt.Printf("  Schedule %q already configured (cron: %s)\n", cfg.ScheduleID, cfg.CronExpression)
 		return nil
 	}
@@ -140,7 +144,12 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 				CronExpressions: []string{cfg.CronExpression},
 				Jitter:          cfg.Jitter,
 			}
+			if input.Description.Schedule.Policy == nil {
+				input.Description.Schedule.Policy = &client.SchedulePolicies{}
+			}
+			input.Description.Schedule.Policy.Overlap = enumspb.SCHEDULE_OVERLAP_POLICY_SKIP
 			if action, ok := input.Description.Schedule.Action.(*client.ScheduleWorkflowAction); ok {
+				action.ID = orchestrator.ActiveScanWorkflowID
 				action.TaskQueue = cfg.TaskQueue
 				action.Args = []interface{}{orchestrator.WorkflowInput{
 					ResourceTypes:     cfg.ResourceTypes,
@@ -173,6 +182,9 @@ func isScheduleAlreadyRunning(err error) bool {
 func scheduleActionMatches(action client.ScheduleAction, cfg *Config) bool {
 	wfAction, ok := action.(*client.ScheduleWorkflowAction)
 	if !ok {
+		return false
+	}
+	if wfAction.ID != orchestrator.ActiveScanWorkflowID {
 		return false
 	}
 	if wfAction.TaskQueue != cfg.TaskQueue {

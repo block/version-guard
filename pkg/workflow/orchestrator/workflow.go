@@ -23,6 +23,7 @@ var ErrNoResourceTypes = fmt.Errorf("orchestrator: WorkflowInput.ResourceTypes i
 const (
 	OrchestratorWorkflowType = "VersionGuardOrchestratorWorkflow"
 	TaskQueueName            = "version-guard-orchestrator"
+	ActiveScanWorkflowID     = "version-guard-active-scan"
 
 	ScanScopeFull     = "full"
 	ScanScopeTargeted = "targeted"

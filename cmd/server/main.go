@@ -479,7 +479,7 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 		fmt.Printf("   Scans will run automatically (schedule: %s)\n", s.ScheduleCron)
 	}
 	fmt.Println("\n📖 To trigger a scan manually, use the Temporal UI or CLI:")
-	fmt.Printf("   temporal workflow start --task-queue %s --type %s --input '{}'\n", s.TemporalTaskQueue, orchestrator.OrchestratorWorkflowType)
+	fmt.Printf("   temporal workflow start --workflow-id %s --task-queue %s --type %s --input '{}'\n", orchestrator.ActiveScanWorkflowID, s.TemporalTaskQueue, orchestrator.OrchestratorWorkflowType)
 	fmt.Println("\n📖 For more information, see the README.md")
 	fmt.Println("\nPress Ctrl+C to stop...")
 

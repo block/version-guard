@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 
@@ -129,7 +130,9 @@ func TestEnsureSchedule_CreatesNew(t *testing.T) {
 	assert.Equal(t, "test-schedule", mock.createOpts.ID)
 	assert.Equal(t, []string{"0 */6 * * *"}, mock.createOpts.Spec.CronExpressions)
 	assert.Equal(t, 5*time.Minute, mock.createOpts.Spec.Jitter)
+	assert.Equal(t, enumspb.SCHEDULE_OVERLAP_POLICY_SKIP, mock.createOpts.Overlap)
 	action := mock.createOpts.Action.(*client.ScheduleWorkflowAction)
+	assert.Equal(t, orchestrator.ActiveScanWorkflowID, action.ID)
 	assert.Equal(t, "test-queue", action.TaskQueue)
 	assert.Equal(t, 2*time.Hour, action.WorkflowExecutionTimeout)
 	require.Len(t, action.Args, 1)
@@ -143,11 +146,13 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 		id: "test-schedule",
 		describeOut: &client.ScheduleDescription{
 			Schedule: client.Schedule{
+				Policy: &client.SchedulePolicies{Overlap: enumspb.SCHEDULE_OVERLAP_POLICY_SKIP},
 				Spec: &client.ScheduleSpec{
 					CronExpressions: []string{"0 */6 * * *"},
 					Jitter:          5 * time.Minute,
 				},
 				Action: &client.ScheduleWorkflowAction{
+					ID:        orchestrator.ActiveScanWorkflowID,
 					TaskQueue: "test-queue",
 					Args: []interface{}{orchestrator.WorkflowInput{
 						ResourceTypes: testResourceTypes,
@@ -227,8 +232,11 @@ func TestEnsureSchedule_AlreadyExists_NewWebhookURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, handle.updateCalled, "Update must be called when EmitterWebhookURL changes")
 	require.NotNil(t, captured)
+	require.NotNil(t, captured.Schedule.Policy)
+	assert.Equal(t, enumspb.SCHEDULE_OVERLAP_POLICY_SKIP, captured.Schedule.Policy.Overlap)
 	action, ok := captured.Schedule.Action.(*client.ScheduleWorkflowAction)
 	require.True(t, ok, "action should be a ScheduleWorkflowAction")
+	assert.Equal(t, orchestrator.ActiveScanWorkflowID, action.ID)
 	require.Len(t, action.Args, 1)
 	in, ok := action.Args[0].(orchestrator.WorkflowInput)
 	require.True(t, ok)
