@@ -60,9 +60,11 @@ type DetectResult struct {
 	Findings        []*types.Finding
 }
 
+//nolint:govet // field alignment sacrificed for logical grouping
 type StoreInput struct {
 	FindingsBatchID string
 	Findings        []*types.Finding
+	ResourceType    types.ResourceType
 }
 
 //nolint:govet // field alignment sacrificed for logical grouping
@@ -288,7 +290,12 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 	}, nil
 }
 
-// StoreFindings persists findings to the store
+// StoreFindings replaces the resource type's findings with this scan's
+// output, evicting entries that dropped out of the inventory. Without
+// eviction, deleted resources persist in the worker-local store (and in
+// every snapshot) until the pod restarts. Inputs recorded by workflows
+// started before ResourceType existed carry the zero value and fall
+// back to plain upserts.
 func (a *Activities) StoreFindings(ctx context.Context, input StoreInput) error {
 	findings, err := a.loadFindings(input.FindingsBatchID, input.Findings)
 	if err != nil {
@@ -298,7 +305,19 @@ func (a *Activities) StoreFindings(ctx context.Context, input StoreInput) error 
 	logger := activity.GetLogger(ctx)
 	logger.Info("Storing findings", "count", len(findings))
 
-	if err := a.Store.SaveFindings(ctx, findings); err != nil {
+	if input.ResourceType == "" {
+		if err := a.Store.SaveFindings(ctx, findings); err != nil {
+			return err
+		}
+		logger.Info("Findings stored successfully")
+		return nil
+	}
+
+	if len(findings) == 0 {
+		logger.Warn("Scan returned no findings; evicting all findings for type",
+			"resourceType", input.ResourceType)
+	}
+	if err := a.Store.ReplaceFindings(ctx, input.ResourceType, findings); err != nil {
 		return err
 	}
 

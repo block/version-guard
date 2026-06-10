@@ -21,8 +21,9 @@ type Store interface {
 	// GetSummary calculates aggregate statistics for findings
 	GetSummary(ctx context.Context, filters FindingFilters) (*ScanSummary, error)
 
-	// DeleteStaleFindings removes findings older than the specified time
-	DeleteStaleFindings(ctx context.Context, resourceType types.ResourceType, olderThan time.Time) error
+	// ReplaceFindings atomically replaces all findings of resourceType
+	// with the given set, evicting entries absent from it
+	ReplaceFindings(ctx context.Context, resourceType types.ResourceType, findings []*types.Finding) error
 }
 
 // FindingFilters defines optional filters for querying findings.

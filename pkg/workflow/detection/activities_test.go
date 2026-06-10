@@ -1,6 +1,7 @@
 package detection
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/block/Version-Guard/pkg/inventory"
 	invmock "github.com/block/Version-Guard/pkg/inventory/mock"
 	"github.com/block/Version-Guard/pkg/policy"
+	"github.com/block/Version-Guard/pkg/store"
 	"github.com/block/Version-Guard/pkg/store/memory"
 	"github.com/block/Version-Guard/pkg/types"
 )
@@ -455,6 +457,140 @@ func TestStoreFindings_CacheMiss(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "findings batch \"nonexistent\" not found")
+}
+
+// seedFindings stores findings as if written by a previous scan.
+func seedFindings(t *testing.T, act *Activities, findings ...*types.Finding) {
+	t.Helper()
+	require.NoError(t, act.Store.SaveFindings(context.Background(), findings))
+}
+
+func listByType(t *testing.T, act *Activities, rt types.ResourceType) []*types.Finding {
+	t.Helper()
+	findings, err := act.Store.ListFindings(context.Background(), store.FindingFilters{ResourceType: &rt})
+	require.NoError(t, err)
+	return findings
+}
+
+func TestStoreFindings_EvictsSameTypeFindingsMissingFromScan(t *testing.T) {
+	act := newTestActivities(nil, nil)
+
+	// Previous scan: a lambda that has since been deleted from the
+	// inventory, plus a finding of another type this scan must not touch.
+	seedFindings(t, act,
+		&types.Finding{ResourceID: "arn:aws:lambda:us-west-2:1:function:deleted", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+		&types.Finding{ResourceID: "arn:aws:eks:us-west-2:1:cluster/other", ResourceType: types.ResourceTypeEKS, Status: types.StatusGreen},
+	)
+
+	env := newActivityEnv()
+	env.RegisterActivity(act.StoreFindings)
+
+	_, err := env.ExecuteActivity(act.StoreFindings, StoreInput{
+		ResourceType: types.ResourceTypeLambda,
+		Findings: []*types.Finding{
+			{ResourceID: "arn:aws:lambda:us-west-2:1:function:current", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+		},
+	})
+	require.NoError(t, err)
+
+	lambdas := listByType(t, act, types.ResourceTypeLambda)
+	require.Len(t, lambdas, 1)
+	assert.Equal(t, "arn:aws:lambda:us-west-2:1:function:current", lambdas[0].ResourceID)
+
+	require.Len(t, listByType(t, act, types.ResourceTypeEKS), 1)
+}
+
+func TestStoreFindings_FromCache_Evicts(t *testing.T) {
+	act := newTestActivities(nil, nil)
+
+	seedFindings(t, act,
+		&types.Finding{ResourceID: "arn:aws:lambda:us-west-2:1:function:deleted", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+	)
+
+	// Production always routes findings through the worker-local batch
+	// cache (ScanID is always set), so eviction must work on this path.
+	act.resourceCache.Store("scan-evict-findings", []*types.Finding{
+		{ResourceID: "arn:aws:lambda:us-west-2:1:function:current", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+	})
+
+	env := newActivityEnv()
+	env.RegisterActivity(act.StoreFindings)
+
+	_, err := env.ExecuteActivity(act.StoreFindings, StoreInput{
+		FindingsBatchID: "scan-evict-findings",
+		ResourceType:    types.ResourceTypeLambda,
+	})
+	require.NoError(t, err)
+
+	lambdas := listByType(t, act, types.ResourceTypeLambda)
+	require.Len(t, lambdas, 1)
+	assert.Equal(t, "arn:aws:lambda:us-west-2:1:function:current", lambdas[0].ResourceID)
+}
+
+func TestStoreFindings_FromCache_NilBatchEvictsTypeToZero(t *testing.T) {
+	act := newTestActivities(nil, nil)
+
+	seedFindings(t, act,
+		&types.Finding{ResourceID: "arn:aws:lambda:us-west-2:1:function:existing", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+	)
+
+	// DetectDrift caches a nil slice when inventory comes back empty; the
+	// type must converge to zero on the cache path too.
+	act.resourceCache.Store("scan-empty-findings", []*types.Finding(nil))
+
+	env := newActivityEnv()
+	env.RegisterActivity(act.StoreFindings)
+
+	_, err := env.ExecuteActivity(act.StoreFindings, StoreInput{
+		FindingsBatchID: "scan-empty-findings",
+		ResourceType:    types.ResourceTypeLambda,
+	})
+	require.NoError(t, err)
+
+	require.Empty(t, listByType(t, act, types.ResourceTypeLambda))
+}
+
+func TestStoreFindings_EmptyBatchEvictsTypeToZero(t *testing.T) {
+	act := newTestActivities(nil, nil)
+
+	seedFindings(t, act,
+		&types.Finding{ResourceID: "arn:aws:lambda:us-west-2:1:function:existing", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+		&types.Finding{ResourceID: "arn:aws:eks:us-west-2:1:cluster/other", ResourceType: types.ResourceTypeEKS, Status: types.StatusGreen},
+	)
+
+	env := newActivityEnv()
+	env.RegisterActivity(act.StoreFindings)
+
+	_, err := env.ExecuteActivity(act.StoreFindings, StoreInput{
+		ResourceType: types.ResourceTypeLambda,
+		Findings:     []*types.Finding{},
+	})
+	require.NoError(t, err)
+
+	require.Empty(t, listByType(t, act, types.ResourceTypeLambda))
+	require.Len(t, listByType(t, act, types.ResourceTypeEKS), 1)
+}
+
+func TestStoreFindings_NoResourceTypeDoesNotEvict(t *testing.T) {
+	act := newTestActivities(nil, nil)
+
+	seedFindings(t, act,
+		&types.Finding{ResourceID: "arn:aws:lambda:us-west-2:1:function:existing", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+	)
+
+	env := newActivityEnv()
+	env.RegisterActivity(act.StoreFindings)
+
+	// Inputs recorded by workflows started before ResourceType existed on
+	// StoreInput carry the zero value and must behave as before.
+	_, err := env.ExecuteActivity(act.StoreFindings, StoreInput{
+		Findings: []*types.Finding{
+			{ResourceID: "arn:aws:lambda:us-west-2:1:function:current", ResourceType: types.ResourceTypeLambda, Status: types.StatusRed},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, listByType(t, act, types.ResourceTypeLambda), 2)
 }
 
 // --- EmitMetrics tests ---

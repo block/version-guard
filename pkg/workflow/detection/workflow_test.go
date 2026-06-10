@@ -98,8 +98,10 @@ func TestDetectionWorkflow_Success(t *testing.T) {
 		activity.RegisterOptions{Name: DetectDriftActivityName},
 	)
 
+	var storeInput StoreInput
 	env.RegisterActivityWithOptions(
 		func(ctx context.Context, input StoreInput) error {
+			storeInput = input
 			return nil
 		},
 		activity.RegisterOptions{Name: StoreFindingsActivityName},
@@ -129,6 +131,7 @@ func TestDetectionWorkflow_Success(t *testing.T) {
 
 	assert.Equal(t, "test-scan-001", output.ScanID)
 	assert.Equal(t, types.ResourceTypeAurora, output.ResourceType)
+	assert.Equal(t, types.ResourceTypeAurora, storeInput.ResourceType)
 	assert.Equal(t, 2, output.FindingsCount)
 	assert.NotNil(t, output.Summary)
 	assert.Equal(t, 50.0, output.Summary.CompliancePercentage)
