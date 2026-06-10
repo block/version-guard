@@ -9,6 +9,9 @@ import (
 
 // Store defines the interface for persisting and retrieving findings
 type Store interface {
+	// ClearFindings removes all findings from the store.
+	ClearFindings(ctx context.Context) error
+
 	// SaveFindings saves or updates findings
 	SaveFindings(ctx context.Context, findings []*types.Finding) error
 

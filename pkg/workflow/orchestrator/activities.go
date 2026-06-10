@@ -16,6 +16,7 @@ import (
 // Activity names
 const (
 	CreateSnapshotActivityName           = "version-guard.CreateSnapshot"
+	ClearFindingsActivityName            = "version-guard.ClearFindings"
 	RecordResourceScanResultActivityName = "version-guard.RecordResourceScanResult"
 )
 
@@ -64,6 +65,12 @@ func NewActivities(
 		Store:         store,
 		SnapshotStore: snapshotStore,
 	}
+}
+
+// ClearFindings removes any findings left in the worker-local scratch store.
+func (a *Activities) ClearFindings(ctx context.Context) error {
+	activity.GetLogger(ctx).Info("Clearing in-memory findings")
+	return a.Store.ClearFindings(ctx)
 }
 
 // CreateSnapshot reads findings directly from the store and persists a snapshot to S3.
@@ -121,6 +128,11 @@ func (a *Activities) CreateSnapshot(ctx context.Context, input CreateSnapshotInp
 	err := a.SnapshotStore.SaveSnapshot(ctx, snap)
 	if err != nil {
 		return nil, err
+	}
+	if err := a.Store.ClearFindings(ctx); err != nil {
+		logger.Warn("Failed to clear in-memory findings after snapshot persisted", "error", err)
+	} else {
+		logger.Info("Cleared in-memory findings after snapshot persisted", "snapshotID", snap.SnapshotID)
 	}
 
 	logger.Info("Snapshot created and persisted",

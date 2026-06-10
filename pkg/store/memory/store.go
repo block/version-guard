@@ -25,6 +25,15 @@ func NewStore() *Store {
 	}
 }
 
+// ClearFindings removes all findings from memory.
+func (s *Store) ClearFindings(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.findings = make(map[string]*types.Finding)
+	return nil
+}
+
 // SaveFindings saves or updates findings in memory
 func (s *Store) SaveFindings(ctx context.Context, findings []*types.Finding) error {
 	s.mu.Lock()

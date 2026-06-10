@@ -26,6 +26,12 @@ func newOrchestratorEnv(t *testing.T) *testsuite.TestWorkflowEnvironment {
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterWorkflow(OrchestratorWorkflow)
 	env.RegisterActivityWithOptions(
+		func(_ context.Context) error {
+			return nil
+		},
+		activity.RegisterOptions{Name: ClearFindingsActivityName},
+	)
+	env.RegisterActivityWithOptions(
 		func(_ context.Context, _ RecordResourceScanResultInput) error {
 			return nil
 		},

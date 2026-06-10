@@ -3,11 +3,11 @@ package scan
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 
 	"github.com/block/Version-Guard/pkg/types"
@@ -50,7 +50,7 @@ func (m *mockStarter) ExecuteWorkflow(_ context.Context, options client.StartWor
 
 func TestTrigger_Run_FullScan(t *testing.T) {
 	mock := &mockStarter{
-		run: &mockWorkflowRun{id: "version-guard-scan-abc", runID: "run-1"},
+		run: &mockWorkflowRun{id: orchestrator.ActiveScanWorkflowID, runID: "run-1"},
 	}
 	defaults := []types.ResourceType{"aurora-mysql", "eks"}
 	tr := NewTriggerWithStarter(mock, "version-guard-orchestrator", defaults)
@@ -58,13 +58,15 @@ func TestTrigger_Run_FullScan(t *testing.T) {
 	res, err := tr.Run(context.Background(), Input{ScanID: "abc"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "version-guard-scan-abc", res.WorkflowID)
+	assert.Equal(t, orchestrator.ActiveScanWorkflowID, res.WorkflowID)
 	assert.Equal(t, "run-1", res.RunID)
 	assert.Equal(t, "abc", res.ScanID)
 
 	require.True(t, mock.called)
-	assert.Equal(t, "version-guard-scan-abc", mock.calledOpts.ID)
+	assert.Equal(t, orchestrator.ActiveScanWorkflowID, mock.calledOpts.ID)
 	assert.Equal(t, "version-guard-orchestrator", mock.calledOpts.TaskQueue)
+	assert.Equal(t, enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL, mock.calledOpts.WorkflowIDConflictPolicy)
+	assert.True(t, mock.calledOpts.WorkflowExecutionErrorWhenAlreadyStarted)
 
 	require.Len(t, mock.calledArgs, 1)
 	in, ok := mock.calledArgs[0].(orchestrator.WorkflowInput)
@@ -115,8 +117,7 @@ func TestTrigger_Run_GeneratesScanIDWhenEmpty(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, res.ScanID, "ScanID should be generated when not provided")
-	assert.True(t, strings.HasPrefix(mock.calledOpts.ID, "version-guard-scan-"),
-		"workflow ID should be prefixed")
+	assert.Equal(t, orchestrator.ActiveScanWorkflowID, mock.calledOpts.ID)
 	in := mock.calledArgs[0].(orchestrator.WorkflowInput)
 	assert.Equal(t, res.ScanID, in.ScanID, "generated ScanID should be passed to workflow")
 }

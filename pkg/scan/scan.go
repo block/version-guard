@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 
 	"github.com/block/Version-Guard/pkg/telemetry"
@@ -147,9 +148,11 @@ func (t *Trigger) Run(ctx context.Context, in Input) (res Result, err error) {
 	workflowID = buildWorkflowID(scanID)
 
 	opts := client.StartWorkflowOptions{
-		ID:                       workflowID,
-		TaskQueue:                t.taskQueue,
-		WorkflowExecutionTimeout: defaultExecutionTimeout,
+		ID:                                       workflowID,
+		TaskQueue:                                t.taskQueue,
+		WorkflowExecutionTimeout:                 defaultExecutionTimeout,
+		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
 
 	run, err := t.starter.ExecuteWorkflow(ctx, opts, orchestrator.OrchestratorWorkflow, orchestrator.WorkflowInput{
@@ -171,9 +174,9 @@ func (t *Trigger) Run(ctx context.Context, in Input) (res Result, err error) {
 	}, nil
 }
 
-// buildWorkflowID produces a workflow ID that is distinguishable from
-// scheduled executions. Scheduled runs use the schedule's generated IDs;
-// manual runs are prefixed so they are easy to find in Temporal UI/CLI.
-func buildWorkflowID(scanID string) string {
-	return fmt.Sprintf("version-guard-scan-%s", scanID)
+// buildWorkflowID returns the singleton orchestrator workflow ID. Temporal
+// rejects a new run with this ID while the previous scan is still open, which
+// keeps the worker-local findings store safe to use as per-scan scratch space.
+func buildWorkflowID(_ string) string {
+	return orchestrator.ActiveScanWorkflowID
 }

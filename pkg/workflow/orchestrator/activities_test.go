@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/block/Version-Guard/pkg/snapshot"
+	"github.com/block/Version-Guard/pkg/store"
 	"github.com/block/Version-Guard/pkg/store/memory"
 	"github.com/block/Version-Guard/pkg/types"
 )
@@ -123,6 +124,9 @@ func TestActivities_CreateSnapshot_HappyPath(t *testing.T) {
 	assert.Equal(t, "v4", fakeSnap.saved.Version)
 	assert.Equal(t, int64(60), fakeSnap.saved.ScanDurationSec)
 	assert.Equal(t, 3, fakeSnap.saved.Summary.TotalResources)
+	findings, err := st.ListFindings(context.Background(), store.FindingFilters{})
+	require.NoError(t, err)
+	assert.Empty(t, findings, "CreateSnapshot should clear the in-memory scratch store after persisting")
 }
 
 func TestActivities_CreateSnapshot_PersistFailureReturnsError(t *testing.T) {
@@ -144,6 +148,9 @@ func TestActivities_CreateSnapshot_PersistFailureReturnsError(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "s3 went down")
+	finding, getErr := st.GetFinding(context.Background(), "r1")
+	require.NoError(t, getErr)
+	assert.NotNil(t, finding, "failed snapshots should leave findings available for activity retry")
 }
 
 func TestActivities_CreateSnapshot_EmptyFindings(t *testing.T) {

@@ -70,6 +70,22 @@ func TestStore_GetFinding(t *testing.T) {
 	assert.Nil(t, notFound)
 }
 
+func TestStore_ClearFindings(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore()
+
+	require.NoError(t, s.SaveFindings(ctx, []*types.Finding{
+		{ResourceID: "1", Status: types.StatusRed},
+		{ResourceID: "2", Status: types.StatusGreen},
+	}))
+
+	require.NoError(t, s.ClearFindings(ctx))
+
+	results, err := s.ListFindings(ctx, store.FindingFilters{})
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}
+
 func TestStore_ListFindings_NoFilters(t *testing.T) {
 	ctx := context.Background()
 	s := NewStore()

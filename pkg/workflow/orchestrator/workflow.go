@@ -23,6 +23,7 @@ var ErrNoResourceTypes = fmt.Errorf("orchestrator: WorkflowInput.ResourceTypes i
 const (
 	OrchestratorWorkflowType = "VersionGuardOrchestratorWorkflow"
 	TaskQueueName            = "version-guard-orchestrator"
+	ActiveScanWorkflowID     = "version-guard-active-scan"
 
 	ScanScopeFull     = "full"
 	ScanScopeTargeted = "targeted"
@@ -118,6 +119,32 @@ func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowO
 			"runID", info.WorkflowExecution.RunID,
 			"error", ErrNoResourceTypes)
 		return nil, ErrNoResourceTypes
+	}
+
+	// The worker-local findings store is scan scratch space only. Clear
+	// leftovers from any previous failed or interrupted scan before child
+	// detection workflows repopulate it.
+	if workflow.GetVersion(ctx, "clear-findings-at-scan-start", workflow.DefaultVersion, 1) == 1 {
+		if err := workflow.ExecuteActivity(
+			workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+				StartToCloseTimeout: 10 * time.Second,
+				RetryPolicy: &temporal.RetryPolicy{
+					InitialInterval:    time.Second,
+					BackoffCoefficient: 2.0,
+					MaximumInterval:    10 * time.Second,
+					MaximumAttempts:    3,
+				},
+			}),
+			ClearFindingsActivityName,
+		).Get(ctx, nil); err != nil {
+			logger.Error("Failed to clear in-memory findings before scan",
+				"event", "scan_workflow_failed",
+				"scanID", input.ScanID,
+				"workflowID", info.WorkflowExecution.ID,
+				"runID", info.WorkflowExecution.RunID,
+				"error", err)
+			return nil, err
+		}
 	}
 
 	// Retry policy for child workflows
