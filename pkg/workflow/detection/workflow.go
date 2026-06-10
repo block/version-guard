@@ -135,6 +135,7 @@ func DetectionWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutp
 	err = workflow.ExecuteActivity(shortCtx, StoreFindingsActivityName, StoreInput{
 		FindingsBatchID: detectResult.FindingsBatchID,
 		Findings:        detectResult.Findings,
+		ResourceType:    input.ResourceType,
 	}).Get(shortCtx, nil)
 	if err != nil {
 		logger.Error("Failed to store findings", "error", err)

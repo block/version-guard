@@ -114,15 +114,25 @@ func (s *Store) GetSummary(ctx context.Context, filters store.FindingFilters) (*
 	return summary, nil
 }
 
-// DeleteStaleFindings removes findings older than the specified time
-func (s *Store) DeleteStaleFindings(ctx context.Context, resourceType types.ResourceType, olderThan time.Time) error {
+// ReplaceFindings atomically replaces all findings of resourceType with
+// the given set, evicting entries absent from it
+func (s *Store) ReplaceFindings(ctx context.Context, resourceType types.ResourceType, findings []*types.Finding) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for id, finding := range s.findings {
-		if finding.ResourceType == resourceType && finding.UpdatedAt.Before(olderThan) {
+		if finding.ResourceType == resourceType {
 			delete(s.findings, id)
 		}
+	}
+
+	now := time.Now()
+	for _, finding := range findings {
+		finding.UpdatedAt = now
+		if finding.DetectedAt.IsZero() {
+			finding.DetectedAt = now
+		}
+		s.findings[finding.ResourceID] = finding
 	}
 
 	return nil

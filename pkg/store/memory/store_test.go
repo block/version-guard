@@ -203,45 +203,45 @@ func TestStore_GetSummary(t *testing.T) {
 	assert.False(t, summary.LastScanTime.IsZero())
 }
 
-func TestStore_DeleteStaleFindings(t *testing.T) {
+func TestStore_ReplaceFindings(t *testing.T) {
 	ctx := context.Background()
 	s := NewStore()
 
-	oldTime := time.Now().Add(-48 * time.Hour)
-	recentTime := time.Now().Add(-1 * time.Hour)
-
-	findings := []*types.Finding{
-		{ResourceID: "1", ResourceType: types.ResourceTypeAurora, UpdatedAt: oldTime},
-		{ResourceID: "2", ResourceType: types.ResourceTypeAurora, UpdatedAt: recentTime},
-		{ResourceID: "3", ResourceType: types.ResourceTypeElastiCache, UpdatedAt: oldTime},
-	}
-
-	// Manually set UpdatedAt (SaveFindings would overwrite it)
-	s.mu.Lock()
-	for _, f := range findings {
-		s.findings[f.ResourceID] = f
-	}
-	s.mu.Unlock()
-
-	// Delete Aurora findings older than 24 hours ago
-	cutoff := time.Now().Add(-24 * time.Hour)
-	err := s.DeleteStaleFindings(ctx, types.ResourceTypeAurora, cutoff)
+	err := s.SaveFindings(ctx, []*types.Finding{
+		{ResourceID: "1", ResourceType: types.ResourceTypeAurora},
+		{ResourceID: "2", ResourceType: types.ResourceTypeAurora},
+		{ResourceID: "3", ResourceType: types.ResourceTypeElastiCache},
+	})
 	require.NoError(t, err)
 
-	// Should have 2 findings left (1 recent Aurora + 1 old ElastiCache)
-	assert.Len(t, s.findings, 2)
+	// Replace Aurora's set: "2" survives (re-listed), "1" is evicted,
+	// "4" is new, and the ElastiCache finding is untouched.
+	err = s.ReplaceFindings(ctx, types.ResourceTypeAurora, []*types.Finding{
+		{ResourceID: "2", ResourceType: types.ResourceTypeAurora},
+		{ResourceID: "4", ResourceType: types.ResourceTypeAurora},
+	})
+	require.NoError(t, err)
 
-	// Old Aurora finding should be deleted
+	assert.Len(t, s.findings, 3)
 	_, exists := s.findings["1"]
 	assert.False(t, exists)
-
-	// Recent Aurora finding should remain
 	_, exists = s.findings["2"]
 	assert.True(t, exists)
-
-	// Old ElastiCache finding should remain (different resource type)
+	_, exists = s.findings["4"]
+	assert.True(t, exists)
 	_, exists = s.findings["3"]
 	assert.True(t, exists)
+
+	// UpdatedAt is stamped on the replacement set
+	assert.False(t, s.findings["4"].UpdatedAt.IsZero())
+
+	// An empty replacement set empties the type
+	err = s.ReplaceFindings(ctx, types.ResourceTypeAurora, nil)
+	require.NoError(t, err)
+	aurora := types.ResourceTypeAurora
+	remaining, err := s.ListFindings(ctx, store.FindingFilters{ResourceType: &aurora})
+	require.NoError(t, err)
+	assert.Empty(t, remaining)
 }
 
 func TestStore_UpdateExistingFinding(t *testing.T) {

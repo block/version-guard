@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/api/serviceerror"
 
 	"github.com/block/Version-Guard/pkg/types"
 	"github.com/block/Version-Guard/pkg/workflow/orchestrator"
@@ -121,4 +122,16 @@ func TestHandler_TriggerError_Returns500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Contains(t, rec.Body.String(), "temporal unavailable")
+}
+
+func TestHandler_ScanAlreadyRunning_Returns409(t *testing.T) {
+	mock := &mockStarter{err: serviceerror.NewWorkflowExecutionAlreadyStarted("already running", "request", "run")}
+	h := newTestHandler(t, mock)
+
+	req := httptest.NewRequest(http.MethodPost, "/scan", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "already running")
 }

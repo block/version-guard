@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 
@@ -24,6 +25,7 @@ func newOrchestratorEnv(t *testing.T) *testsuite.TestWorkflowEnvironment {
 	t.Helper()
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: ActiveScanWorkflowID})
 	env.RegisterWorkflow(OrchestratorWorkflow)
 	env.RegisterActivityWithOptions(
 		func(_ context.Context, _ RecordResourceScanResultInput) error {
@@ -112,6 +114,23 @@ func TestOrchestratorWorkflow_EmptyResourceTypes_ReturnsError(t *testing.T) {
 	err := env.GetWorkflowError()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ResourceTypes is empty")
+}
+
+func TestOrchestratorWorkflow_RejectsNonSingletonWorkflowID(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "not-the-active-scan"})
+	env.RegisterWorkflow(OrchestratorWorkflow)
+
+	env.ExecuteWorkflow(OrchestratorWorkflow, WorkflowInput{
+		ScanID:        "scan-wrong-id",
+		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ActiveScanWorkflowID)
 }
 
 func TestOrchestratorWorkflow_ScanIDDefaultsToWorkflowID(t *testing.T) {
