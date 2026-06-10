@@ -88,6 +88,15 @@ type ResourceTypeResult struct {
 func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
 	info := workflow.GetInfo(ctx)
+	if info.WorkflowExecution.ID != ActiveScanWorkflowID {
+		err := fmt.Errorf("orchestrator: workflow ID must be %q, got %q", ActiveScanWorkflowID, info.WorkflowExecution.ID)
+		logger.Error("Orchestrator workflow failed",
+			"event", "scan_workflow_failed",
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"error", err)
+		return nil, err
+	}
 
 	// Ensure ScanID is set for correlation across child workflows and snapshots
 	// (scheduled executions pass empty ScanID)
