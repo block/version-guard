@@ -13,35 +13,42 @@ Version Guard helps organizations maintain infrastructure security and complianc
 
 ## 🏗️ Architecture
 
-Version Guard implements a **two-stage detection pipeline**:
+Version Guard implements a **two-stage detection pipeline**. Manual and scheduled triggers share the same scan pipeline; scheduled triggers go through a small Temporal launcher workflow first so Temporal's schedule-generated workflow IDs do not bypass the singleton scan guard.
 
 ```
+┌──────────────────────────┐        ┌─────────────────────────────────┐
+│ Manual trigger           │        │ Temporal Schedule API            │
+│ POST /scan or CLI        │        │ SCHEDULE_* env vars              │
+└────────────┬─────────────┘        └────────────────┬────────────────┘
+             │                                       │
+             │                                       ▼
+             │                         ┌──────────────────────────────┐
+             │                         │ ScheduledScanWorkflow        │
+             │                         │ launcher only; no scanning   │
+             │                         └──────────────┬───────────────┘
+             │                                        │
+             └────────────────────┬───────────────────┘
+                                  ▼
 ┌────────────────────────────────────────────────────────────┐
-│  STAGE 1: DETECT (Temporal Workflow)                       │
-│                                                            │
-│   Fan-Out: Parallel Detection per Resource Type            │
-│   ┌───────┐  ┌─────────┐  ┌───────┐                        │
-│   │Aurora │  │   EKS   │  │ More  │  ...                   │
-│   └───┬───┘  └────┬────┘  └───┬───┘                        │
-│       └───────────┼───────────┘                            │
-│                   ▼                                        │
-│   Inventory (Wiz) + EOL Data + Classify                    │
-│                   │                                        │
-└───────────────────┼────────────────────────────────────────┘
-                    │
-┌───────────────────┼────────────────────────────────────────┐
+│  SINGLETON SCAN WORKFLOW                                   │
+│  workflow ID: version-guard-active-scan                    │
+│  Temporal rejects a second open run with this same ID       │
+└────────────────────────────┬───────────────────────────────┘
+                             ▼
+┌────────────────────────────────────────────────────────────┐
+│  STAGE 1: DETECT                                           │
+│  Fan-Out: parallel detection per resource type             │
+│  Inventory (Wiz) + EOL data + classify                     │
+└────────────────────────────┬───────────────────────────────┘
+                             ▼
+┌────────────────────────────────────────────────────────────┐
 │  STAGE 2: STORE                                            │
-│                   ▼                                        │
-│   Create Versioned JSON Snapshot                           │
-│                   │                                        │
-│   s3://bucket/snapshots/YYYY/MM/DD/{snapshot-id}.json      │
-│   s3://bucket/snapshots/latest.json                        │
-│                                                            │
-└────────────────────────────────────────────────────────────┘
-                    │
-                    ▼
-          📤 YOUR CUSTOM EMITTERS
-        (See "Extending Version Guard")
+│  s3://bucket/snapshots/YYYY/MM/DD/{snapshot-id}.json       │
+│  s3://bucket/snapshots/latest.json                         │
+└────────────────────────────┬───────────────────────────────┘
+                             ▼
+                   📤 YOUR CUSTOM EMITTERS
+                 (See "Extending Version Guard")
 ```
 
 **Key Components:**
@@ -248,11 +255,13 @@ curl -X POST http://localhost:8081/scan \
 **Via Temporal directly:**
 
 ```bash
-# Temporal CLI (from inside the temporal container if using docker-compose)
+# Manual scan through the singleton orchestrator workflow. Use the fixed
+# workflow ID so Temporal enforces "only one active scan at a time".
 docker compose exec temporal temporal workflow start \
+  --workflow-id version-guard-active-scan \
   --task-queue version-guard-detection \
   --type OrchestratorWorkflow \
-  --input '{}' \
+  --input '{"ResourceTypes":["aurora-mysql","eks"],"ScanScope":"full"}' \
   --address localhost:7233 \
   --namespace version-guard-dev
 
@@ -284,7 +293,7 @@ Resource Breakdown:
 
 **Verify snapshot creation:**
 
-Snapshots are stored in MinIO (local S3) at `s3://version-guard-snapshots/snapshots/YYYY/MM/DD/{workflow-id}.json`:
+Snapshots are stored in MinIO (local S3) at `s3://version-guard-snapshots/snapshots/YYYY/MM/DD/{snapshot-id}.json`. For scheduled runs, the snapshot ID remains the schedule-generated run ID (for example `version-guard-scheduled-scan-2026-06-11T18:00:00Z`) even though the underlying scan workflow uses the fixed singleton ID:
 
 ```bash
 # List snapshots (from logs)
@@ -376,7 +385,16 @@ export SCHEDULE_CRON="*/30 * * * *"  # Every 30 minutes
 export SCHEDULE_JITTER="2m"
 ```
 
-The schedule uses a create-or-update pattern — safe to restart the server without creating duplicate schedules. If the cron expression changes, the existing schedule is updated automatically.
+The public configuration has not changed: `SCHEDULE_ENABLED`, `SCHEDULE_CRON`, `SCHEDULE_ID`, `SCHEDULE_JITTER`, and `TEMPORAL_TASK_QUEUE` are still the only knobs. The schedule uses a create-or-update pattern — safe to restart the server without creating duplicate schedules. If the cron expression changes, the existing schedule is updated automatically.
+
+Under the hood, the schedule starts `ScheduledScanWorkflow`. Temporal schedules may append the scheduled fire time to that workflow ID (for example `version-guard-scheduled-scan-2026-06-11T08:00:00Z`). That launcher then starts the real scan as child workflow ID `version-guard-active-scan`. Manual scans use the same fixed `version-guard-active-scan` ID directly. Because both paths converge on the same fixed workflow ID, Temporal rejects overlapping scans while still allowing each completed daily schedule to create a unique snapshot.
+
+In short:
+
+- **Config stays the same** — no new env vars, chart values, ports, task queues, or schedule IDs.
+- **Manual scans stay the same** — `POST /scan` and the CLI start `version-guard-active-scan`.
+- **Scheduled scans keep unique snapshot IDs** — the scheduled launcher ID is passed through as `ScanID`.
+- **Only one collector scan can run at a time** — scheduled and manual triggers both contend on `version-guard-active-scan`.
 
 ```bash
 # Verify the schedule

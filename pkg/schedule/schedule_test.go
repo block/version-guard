@@ -132,7 +132,8 @@ func TestEnsureSchedule_CreatesNew(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, mock.createOpts.Spec.Jitter)
 	assert.Equal(t, enumspb.SCHEDULE_OVERLAP_POLICY_SKIP, mock.createOpts.Overlap)
 	action := mock.createOpts.Action.(*client.ScheduleWorkflowAction)
-	assert.Equal(t, orchestrator.ActiveScanWorkflowID, action.ID)
+	assert.Equal(t, orchestrator.ScheduledScanWorkflowID, action.ID)
+	assert.NotNil(t, action.Workflow)
 	assert.Equal(t, "test-queue", action.TaskQueue)
 	assert.Equal(t, 2*time.Hour, action.WorkflowExecutionTimeout)
 	require.Len(t, action.Args, 1)
@@ -152,7 +153,7 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 					Jitter:          5 * time.Minute,
 				},
 				Action: &client.ScheduleWorkflowAction{
-					ID:        orchestrator.ActiveScanWorkflowID,
+					ID:        orchestrator.ScheduledScanWorkflowID,
 					TaskQueue: "test-queue",
 					Args: []interface{}{orchestrator.WorkflowInput{
 						ResourceTypes: testResourceTypes,
@@ -179,6 +180,59 @@ func TestEnsureSchedule_AlreadyExists_SameCron(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, handle.updateCalled, "Update should not be called when cron and action match")
+}
+
+func TestEnsureSchedule_AlreadyExists_OldDirectOrchestratorActionUpdates(t *testing.T) {
+	handle := &mockScheduleHandle{
+		id: "test-schedule",
+		describeOut: &client.ScheduleDescription{
+			Schedule: client.Schedule{
+				Policy: &client.SchedulePolicies{Overlap: enumspb.SCHEDULE_OVERLAP_POLICY_SKIP},
+				Spec: &client.ScheduleSpec{
+					CronExpressions: []string{"0 */6 * * *"},
+					Jitter:          5 * time.Minute,
+				},
+				Action: &client.ScheduleWorkflowAction{
+					ID:        orchestrator.ActiveScanWorkflowID,
+					Workflow:  orchestrator.OrchestratorWorkflow,
+					TaskQueue: "test-queue",
+					Args: []interface{}{orchestrator.WorkflowInput{
+						ResourceTypes: testResourceTypes,
+						ScanScope:     orchestrator.ScanScopeFull,
+					}},
+				},
+			},
+		},
+	}
+	var captured *client.ScheduleUpdate
+	handle.updateFn = func(opts client.ScheduleUpdateOptions) {
+		input := client.ScheduleUpdateInput{Description: *handle.describeOut}
+		result, err := opts.DoUpdate(input)
+		require.NoError(t, err)
+		captured = result
+	}
+	mock := &mockCreator{
+		createErr: temporal.ErrScheduleAlreadyRunning,
+		handle:    handle,
+	}
+	mgr := NewManagerWithClient(mock)
+
+	err := mgr.EnsureSchedule(context.Background(), Config{
+		Enabled:        true,
+		ScheduleID:     "test-schedule",
+		CronExpression: "0 */6 * * *",
+		Jitter:         5 * time.Minute,
+		TaskQueue:      "test-queue",
+		ResourceTypes:  testResourceTypes,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, handle.updateCalled, "Update should rewrite the pre-hotfix direct orchestrator schedule action")
+	require.NotNil(t, captured)
+	action, ok := captured.Schedule.Action.(*client.ScheduleWorkflowAction)
+	require.True(t, ok)
+	assert.Equal(t, orchestrator.ScheduledScanWorkflowID, action.ID)
+	assert.NotNil(t, action.Workflow)
 }
 
 // TestEnsureSchedule_AlreadyExists_NewWebhookURL guards the contract that
@@ -236,7 +290,8 @@ func TestEnsureSchedule_AlreadyExists_NewWebhookURL(t *testing.T) {
 	assert.Equal(t, enumspb.SCHEDULE_OVERLAP_POLICY_SKIP, captured.Schedule.Policy.Overlap)
 	action, ok := captured.Schedule.Action.(*client.ScheduleWorkflowAction)
 	require.True(t, ok, "action should be a ScheduleWorkflowAction")
-	assert.Equal(t, orchestrator.ActiveScanWorkflowID, action.ID)
+	assert.Equal(t, orchestrator.ScheduledScanWorkflowID, action.ID)
+	assert.NotNil(t, action.Workflow)
 	require.Len(t, action.Args, 1)
 	in, ok := action.Args[0].(orchestrator.WorkflowInput)
 	require.True(t, ok)
