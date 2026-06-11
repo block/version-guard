@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -88,8 +89,10 @@ type ResourceTypeResult struct {
 func OrchestratorWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
 	logger := workflow.GetLogger(ctx)
 	info := workflow.GetInfo(ctx)
-	if info.WorkflowExecution.ID != ActiveScanWorkflowID {
-		err := fmt.Errorf("orchestrator: workflow ID must be %q, got %q", ActiveScanWorkflowID, info.WorkflowExecution.ID)
+	// Schedule-started executions carry the action ID suffixed with the
+	// nominal start time ("{ID}-{timestamp}"), so match on prefix.
+	if !strings.HasPrefix(info.WorkflowExecution.ID, ActiveScanWorkflowID) {
+		err := fmt.Errorf("orchestrator: workflow ID must start with %q, got %q", ActiveScanWorkflowID, info.WorkflowExecution.ID)
 		logger.Error("Orchestrator workflow failed",
 			"event", "scan_workflow_failed",
 			"workflowID", info.WorkflowExecution.ID,

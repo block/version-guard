@@ -116,6 +116,27 @@ func TestOrchestratorWorkflow_EmptyResourceTypes_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "ResourceTypes is empty")
 }
 
+func TestOrchestratorWorkflow_AcceptsScheduleSuffixedWorkflowID(t *testing.T) {
+	// Temporal schedules start the action workflow as "{Action.ID}-{nominal
+	// start time}", so scheduled runs never carry the bare singleton ID.
+	env := newOrchestratorEnv(t)
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: ActiveScanWorkflowID + "-2026-06-11T08:00:00Z"})
+	stubCreateSnapshot(env, &SnapshotResult{SnapshotID: "snap-1"}, nil)
+
+	env.OnWorkflow(detection.DetectionWorkflow, mock.Anything, mock.Anything).
+		Return(&detection.WorkflowOutput{
+			FindingsCount: 1,
+			Summary:       &types.ScanSummary{TotalResources: 1, GreenCount: 1},
+		}, nil)
+
+	env.ExecuteWorkflow(OrchestratorWorkflow, WorkflowInput{
+		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+}
+
 func TestOrchestratorWorkflow_RejectsNonSingletonWorkflowID(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestWorkflowEnvironment()
