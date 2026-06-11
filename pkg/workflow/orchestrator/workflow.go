@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -24,6 +25,7 @@ const (
 	OrchestratorWorkflowType = "VersionGuardOrchestratorWorkflow"
 	TaskQueueName            = "version-guard-orchestrator"
 	ActiveScanWorkflowID     = "version-guard-active-scan"
+	ScheduledScanWorkflowID  = "version-guard-scheduled-scan"
 
 	ScanScopeFull     = "full"
 	ScanScopeTargeted = "targeted"
@@ -73,6 +75,42 @@ type ResourceTypeResult struct {
 	UnknownCount   int
 	DurationMillis int64
 	Error          string // Empty if successful
+}
+
+// ScheduledScanWorkflow is the Temporal schedule entry point. Temporal appends
+// the scheduled fire time to workflow IDs for uniqueness, so schedules cannot
+// start OrchestratorWorkflow directly while it enforces ActiveScanWorkflowID.
+// This launcher may have a timestamp-suffixed ID, but it starts the real scan
+// as a child workflow using the fixed singleton ID. That keeps scheduled and
+// manual scans mutually exclusive while preserving unique scheduled ScanIDs.
+func ScheduledScanWorkflow(ctx workflow.Context, input WorkflowInput) (*WorkflowOutput, error) {
+	info := workflow.GetInfo(ctx)
+	if input.ScanID == "" {
+		input.ScanID = info.WorkflowExecution.ID
+	}
+
+	childOpts := workflow.ChildWorkflowOptions{
+		WorkflowID:               ActiveScanWorkflowID,
+		WorkflowExecutionTimeout: 2 * time.Hour,
+		WorkflowIDReusePolicy:    enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
+	}
+	childCtx := workflow.WithChildOptions(ctx, childOpts)
+
+	var output WorkflowOutput
+	err := workflow.ExecuteChildWorkflow(childCtx, OrchestratorWorkflow, input).Get(ctx, &output)
+	if err != nil {
+		logger := workflow.GetLogger(ctx)
+		logger.Error("Scheduled scan workflow failed",
+			"event", "scheduled_scan_workflow_failed",
+			"scanID", input.ScanID,
+			"workflowID", info.WorkflowExecution.ID,
+			"runID", info.WorkflowExecution.RunID,
+			"childWorkflowID", ActiveScanWorkflowID,
+			"error", err)
+		return nil, err
+	}
+
+	return &output, nil
 }
 
 // OrchestratorWorkflow is the main workflow that orchestrates the three-stage pipeline:

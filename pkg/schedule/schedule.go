@@ -78,8 +78,8 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			Jitter:          cfg.Jitter,
 		},
 		Action: &client.ScheduleWorkflowAction{
-			ID:       orchestrator.ActiveScanWorkflowID,
-			Workflow: orchestrator.OrchestratorWorkflow,
+			ID:       orchestrator.ScheduledScanWorkflowID,
+			Workflow: orchestrator.ScheduledScanWorkflow,
 			Args: []interface{}{orchestrator.WorkflowInput{
 				ResourceTypes:     cfg.ResourceTypes,
 				EmitterWebhookURL: cfg.EmitterWebhookURL,
@@ -149,7 +149,8 @@ func (m *Manager) EnsureSchedule(ctx context.Context, cfg Config) error {
 			}
 			input.Description.Schedule.Policy.Overlap = enumspb.SCHEDULE_OVERLAP_POLICY_SKIP
 			if action, ok := input.Description.Schedule.Action.(*client.ScheduleWorkflowAction); ok {
-				action.ID = orchestrator.ActiveScanWorkflowID
+				action.ID = orchestrator.ScheduledScanWorkflowID
+				action.Workflow = orchestrator.ScheduledScanWorkflow
 				action.TaskQueue = cfg.TaskQueue
 				action.Args = []interface{}{orchestrator.WorkflowInput{
 					ResourceTypes:     cfg.ResourceTypes,
@@ -184,7 +185,7 @@ func scheduleActionMatches(action client.ScheduleAction, cfg *Config) bool {
 	if !ok {
 		return false
 	}
-	if wfAction.ID != orchestrator.ActiveScanWorkflowID {
+	if wfAction.ID != orchestrator.ScheduledScanWorkflowID {
 		return false
 	}
 	if wfAction.TaskQueue != cfg.TaskQueue {

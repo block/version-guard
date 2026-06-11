@@ -422,8 +422,9 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 
 	// Register workflows
 	w.RegisterWorkflow(detection.DetectionWorkflow)
+	w.RegisterWorkflow(orchestrator.ScheduledScanWorkflow)
 	w.RegisterWorkflow(orchestrator.OrchestratorWorkflow)
-	fmt.Println("✓ Workflows registered (detection, orchestrator)")
+	fmt.Println("✓ Workflows registered (detection, scheduled scan, orchestrator)")
 
 	// Register activities
 	// Detection workflow activities
@@ -478,8 +479,9 @@ func (s *ServerCLI) Run(_ *kong.Context) error {
 	if s.ScheduleEnabled {
 		fmt.Printf("   Scans will run automatically (schedule: %s)\n", s.ScheduleCron)
 	}
-	fmt.Println("\n📖 To trigger a scan manually, use the Temporal UI or CLI:")
-	fmt.Printf("   temporal workflow start --workflow-id %s --task-queue %s --type %s --input '{}'\n", orchestrator.ActiveScanWorkflowID, s.TemporalTaskQueue, orchestrator.OrchestratorWorkflowType)
+	fmt.Println("\n📖 To trigger a scan manually, use the HTTP admin API:")
+	fmt.Printf("   curl -X POST http://localhost:%d/scan\n", s.HTTPPort)
+	fmt.Printf("   Advanced Temporal users: start %s with workflow ID %s and explicit ResourceTypes input\n", orchestrator.OrchestratorWorkflowType, orchestrator.ActiveScanWorkflowID)
 	fmt.Println("\n📖 For more information, see the README.md")
 	fmt.Println("\nPress Ctrl+C to stop...")
 

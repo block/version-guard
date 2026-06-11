@@ -133,6 +133,40 @@ func TestOrchestratorWorkflow_RejectsNonSingletonWorkflowID(t *testing.T) {
 	assert.Contains(t, err.Error(), ActiveScanWorkflowID)
 }
 
+func TestScheduledScanWorkflow_StartsSingletonChildWithScheduledScanID(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: ScheduledScanWorkflowID + "-2026-06-11T08:00:00Z"})
+	env.RegisterWorkflow(ScheduledScanWorkflow)
+	env.RegisterWorkflow(OrchestratorWorkflow)
+
+	var capturedInput WorkflowInput
+	env.OnWorkflow(OrchestratorWorkflow, mock.Anything, mock.Anything).
+		Return(func(ctx workflow.Context, in WorkflowInput) (*WorkflowOutput, error) {
+			capturedInput = in
+			assert.Equal(t, ActiveScanWorkflowID, workflow.GetInfo(ctx).WorkflowExecution.ID)
+			return &WorkflowOutput{
+				ScanID:     in.ScanID,
+				SnapshotID: "snapshot-from-child",
+			}, nil
+		})
+
+	env.ExecuteWorkflow(ScheduledScanWorkflow, WorkflowInput{
+		ResourceTypes: []types.ResourceType{types.ResourceTypeAurora},
+		ScanScope:     ScanScopeFull,
+	})
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+	assert.Equal(t, ScheduledScanWorkflowID+"-2026-06-11T08:00:00Z", capturedInput.ScanID)
+	assert.Equal(t, []types.ResourceType{types.ResourceTypeAurora}, capturedInput.ResourceTypes)
+
+	var output WorkflowOutput
+	require.NoError(t, env.GetWorkflowResult(&output))
+	assert.Equal(t, capturedInput.ScanID, output.ScanID)
+	assert.Equal(t, "snapshot-from-child", output.SnapshotID)
+}
+
 func TestOrchestratorWorkflow_ScanIDDefaultsToWorkflowID(t *testing.T) {
 	env := newOrchestratorEnv(t)
 
