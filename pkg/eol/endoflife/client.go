@@ -100,13 +100,16 @@ func NewRealHTTPClientWithConfig(httpClient *http.Client, baseURL string) *RealH
 }
 
 func lifecycleDataSource(value string, fallback types.LifecycleDataSource) types.LifecycleDataSource {
-	switch types.LifecycleDataSource(strings.ToLower(strings.TrimSpace(value))) {
+	normalized := types.LifecycleDataSource(strings.ToLower(strings.TrimSpace(value)))
+	switch normalized {
+	case "":
+		return fallback
 	case types.LifecycleDataSourceEndOfLifeDate:
 		return types.LifecycleDataSourceEndOfLifeDate
 	case types.LifecycleDataSourceLocalOverride:
 		return types.LifecycleDataSourceLocalOverride
 	default:
-		return fallback
+		return types.LifecycleDataSourceUnknown
 	}
 }
 

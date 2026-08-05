@@ -234,28 +234,52 @@ func TestRealHTTPClient_RejectsMalformedWholeResponse(t *testing.T) {
 	}
 }
 
-func TestNewRealHTTPClient_DefaultDataSource(t *testing.T) {
-	client := NewRealHTTPClient()
-	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = "example.test"
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(`[]`)),
-			Request:    req,
-		}, nil
-	})
+func TestNewRealHTTPClient_ResponseDataSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		header     string
+		wantSource types.LifecycleDataSource
+	}{
+		{
+			name:       "absent header uses direct client fallback",
+			wantSource: types.LifecycleDataSourceEndOfLifeDate,
+		},
+		{
+			name:       "invalid header does not use direct client fallback",
+			header:     "attacker-controlled-value",
+			wantSource: types.LifecycleDataSourceUnknown,
+		},
+	}
 
-	result, err := client.GetProductCycles(context.Background(), "test")
-	if err != nil {
-		t.Fatalf("GetProductCycles() error = %v", err)
-	}
-	if result.DataSource != types.LifecycleDataSourceEndOfLifeDate {
-		t.Errorf("DataSource = %q, want %q", result.DataSource, types.LifecycleDataSourceEndOfLifeDate)
-	}
-	if result.FetchedAt.IsZero() {
-		t.Error("FetchedAt should be non-zero")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewRealHTTPClient()
+			client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				req.URL.Scheme = "http"
+				req.URL.Host = "example.test"
+				header := make(http.Header)
+				if tt.header != "" {
+					header.Set(EOLSourceHeader, tt.header)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader(`[]`)),
+					Request:    req,
+				}, nil
+			})
+
+			result, err := client.GetProductCycles(context.Background(), "test")
+			if err != nil {
+				t.Fatalf("GetProductCycles() error = %v", err)
+			}
+			if result.DataSource != tt.wantSource {
+				t.Errorf("DataSource = %q, want %q", result.DataSource, tt.wantSource)
+			}
+			if result.FetchedAt.IsZero() {
+				t.Error("FetchedAt should be non-zero")
+			}
+		})
 	}
 }
 
