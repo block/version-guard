@@ -22,19 +22,19 @@ func TestRealAPIIntegration(t *testing.T) {
 	defer cancel()
 
 	// Test amazon-eks product
-	cycles, err := client.GetProductCycles(ctx, "amazon-eks")
+	result, err := client.GetProductCycles(ctx, "amazon-eks")
 	if err != nil {
 		t.Fatalf("Failed to fetch EKS cycles: %v", err)
 	}
 
-	if len(cycles) == 0 {
+	if len(result.Cycles) == 0 {
 		t.Fatal("Expected at least one EKS version, got none")
 	}
 
-	t.Logf("Fetched %d EKS versions from endoflife.date", len(cycles))
+	t.Logf("Fetched %d EKS versions from endoflife.date", len(result.Cycles))
 
 	// Verify first few versions have expected structure
-	for i, cycle := range cycles {
+	for i, cycle := range result.Cycles {
 		if i >= 5 {
 			break
 		}

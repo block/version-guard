@@ -17,8 +17,8 @@ import (
 // return an UNKNOWN lifecycle, not error out.
 func TestProvider_GetVersionLifecycle_Product404(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(_ context.Context, product string) ([]*ProductCycle, error) {
-			return nil, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
+		GetProductCyclesFunc: func(_ context.Context, product string) (ProductCyclesResult, error) {
+			return ProductCyclesResult{}, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
 		},
 	}
 
@@ -40,8 +40,8 @@ func TestProvider_GetVersionLifecycle_Product404(t *testing.T) {
 // empty list (not error) for ErrProductNotFound.
 func TestProvider_ListAllVersions_Product404(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(_ context.Context, product string) ([]*ProductCycle, error) {
-			return nil, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
+		GetProductCyclesFunc: func(_ context.Context, product string) (ProductCyclesResult, error) {
+			return ProductCyclesResult{}, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
 		},
 	}
 
@@ -61,9 +61,9 @@ func TestProvider_ListAllVersions_Product404(t *testing.T) {
 func TestProvider_ListAllVersions_404IsCached(t *testing.T) {
 	var calls atomic.Int32
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(_ context.Context, product string) ([]*ProductCycle, error) {
+		GetProductCyclesFunc: func(_ context.Context, product string) (ProductCyclesResult, error) {
 			calls.Add(1)
-			return nil, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
+			return ProductCyclesResult{}, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
 		},
 	}
 
@@ -94,8 +94,8 @@ func TestProvider_GetVersionLifecycle_NonProductErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClient := &MockClient{
-				GetProductCyclesFunc: func(_ context.Context, _ string) ([]*ProductCycle, error) {
-					return nil, errors.New(tt.errorMsg)
+				GetProductCyclesFunc: func(_ context.Context, _ string) (ProductCyclesResult, error) {
+					return ProductCyclesResult{}, errors.New(tt.errorMsg)
 				},
 			}
 

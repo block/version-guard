@@ -199,7 +199,7 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 	// Cache miss or expired - use singleflight to prevent thundering herd
 	result, err, _ := p.group.Do(cacheKey, func() (interface{}, error) {
 		// Fetch from endoflife.date API (only one goroutine executes this)
-		cycles, err := p.client.GetProductCycles(ctx, product)
+		result, err := p.client.GetProductCycles(ctx, product)
 		if err != nil {
 			// 404 (product not yet on endoflife.date — new product or
 			// pending PR like aurora-mysql) is treated as an empty
@@ -227,7 +227,7 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 
 		// Convert to our types
 		var versions []*types.VersionLifecycle
-		for _, cycle := range cycles {
+		for _, cycle := range result.Cycles {
 			lifecycle, err := p.convertCycle(engine, product, cycle)
 			if err != nil {
 				// Skip cycles we can't parse, but log a warning

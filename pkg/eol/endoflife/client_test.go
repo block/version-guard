@@ -3,11 +3,21 @@ package endoflife
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/block/Version-Guard/pkg/types"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestRealHTTPClient_GetProductCycles(t *testing.T) {
 	tests := []struct {
@@ -83,7 +93,7 @@ func TestRealHTTPClient_GetProductCycles(t *testing.T) {
 			)
 
 			// Execute
-			cycles, err := client.GetProductCycles(context.Background(), tt.product)
+			result, err := client.GetProductCycles(context.Background(), tt.product)
 
 			// Verify
 			if (err != nil) != tt.wantErr {
@@ -91,23 +101,23 @@ func TestRealHTTPClient_GetProductCycles(t *testing.T) {
 				return
 			}
 
-			if !tt.wantErr && len(cycles) != tt.wantCycles {
-				t.Errorf("GetProductCycles() got %d cycles, want %d", len(cycles), tt.wantCycles)
+			if !tt.wantErr && len(result.Cycles) != tt.wantCycles {
+				t.Errorf("GetProductCycles() got %d cycles, want %d", len(result.Cycles), tt.wantCycles)
 			}
 
 			// Verify first cycle if successful
 			if !tt.wantErr && tt.wantCycles > 0 {
-				if cycles[0].Cycle != "1.31" {
-					t.Errorf("First cycle = %s, want 1.31", cycles[0].Cycle)
+				if result.Cycles[0].Cycle != "1.31" {
+					t.Errorf("First cycle = %s, want 1.31", result.Cycles[0].Cycle)
 				}
-				if cycles[0].ReleaseDate != "2024-11-19" {
-					t.Errorf("First cycle release date = %s, want 2024-11-19", cycles[0].ReleaseDate)
+				if result.Cycles[0].ReleaseDate != "2024-11-19" {
+					t.Errorf("First cycle release date = %s, want 2024-11-19", result.Cycles[0].ReleaseDate)
 				}
-				if cycles[0].LatestReleaseDate != "2025-01-15" {
-					t.Errorf("First cycle latest release date = %s, want 2025-01-15", cycles[0].LatestReleaseDate)
+				if result.Cycles[0].LatestReleaseDate != "2025-01-15" {
+					t.Errorf("First cycle latest release date = %s, want 2025-01-15", result.Cycles[0].LatestReleaseDate)
 				}
-				if cycles[0].LTS != "2025-02-01" {
-					t.Errorf("First cycle lts = %v, want 2025-02-01", cycles[0].LTS)
+				if result.Cycles[0].LTS != "2025-02-01" {
+					t.Errorf("First cycle lts = %v, want 2025-02-01", result.Cycles[0].LTS)
 				}
 			}
 		})
@@ -120,19 +130,102 @@ func TestRealHTTPClient_GetProductCycles(t *testing.T) {
 // without sniffing the message text.
 func TestRealHTTPClient_404ReturnsTypedError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(EOLSourceHeader, string(types.LifecycleDataSourceLocalOverride))
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"Product not found"}`))
 	}))
 	defer server.Close()
 
 	client := NewRealHTTPClientWithConfig(&http.Client{Timeout: 5 * time.Second}, server.URL)
-	_, err := client.GetProductCycles(context.Background(), "non-existent")
+	result, err := client.GetProductCycles(context.Background(), "non-existent")
 
 	if err == nil {
 		t.Fatal("expected error for 404, got nil")
 	}
 	if !errors.Is(err, ErrProductNotFound) {
 		t.Errorf("404 should wrap ErrProductNotFound, got %v", err)
+	}
+	if result.DataSource != types.LifecycleDataSourceLocalOverride {
+		t.Errorf("DataSource = %q, want %q", result.DataSource, types.LifecycleDataSourceLocalOverride)
+	}
+	if result.FetchedAt.IsZero() {
+		t.Error("FetchedAt should be non-zero for 404 response")
+	}
+}
+
+func TestRealHTTPClient_ProductCyclesResultSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		baseURL    func(string) string
+		header     string
+		wantSource types.LifecycleDataSource
+	}{
+		{
+			name:       "custom endpoint with local override header",
+			baseURL:    func(serverURL string) string { return serverURL },
+			header:     "local_override",
+			wantSource: types.LifecycleDataSourceLocalOverride,
+		},
+		{
+			name:       "custom endpoint without header",
+			baseURL:    func(serverURL string) string { return serverURL },
+			wantSource: types.LifecycleDataSourceUnknown,
+		},
+		{
+			name:       "invalid source header",
+			baseURL:    func(serverURL string) string { return serverURL },
+			header:     "attacker-controlled-value",
+			wantSource: types.LifecycleDataSourceUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.header != "" {
+					w.Header().Set(EOLSourceHeader, tt.header)
+				}
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			defer server.Close()
+
+			client := NewRealHTTPClientWithConfig(nil, tt.baseURL(server.URL))
+			result, err := client.GetProductCycles(context.Background(), "test")
+			if err != nil {
+				t.Fatalf("GetProductCycles() error = %v", err)
+			}
+			if result.DataSource != tt.wantSource {
+				t.Errorf("DataSource = %q, want %q", result.DataSource, tt.wantSource)
+			}
+			if result.FetchedAt.IsZero() {
+				t.Error("FetchedAt should be non-zero")
+			}
+		})
+	}
+}
+
+func TestNewRealHTTPClient_DefaultDataSource(t *testing.T) {
+	client := NewRealHTTPClient()
+	client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = "example.test"
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+			Request:    req,
+		}, nil
+	})
+
+	result, err := client.GetProductCycles(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("GetProductCycles() error = %v", err)
+	}
+	if result.DataSource != types.LifecycleDataSourceEndOfLifeDate {
+		t.Errorf("DataSource = %q, want %q", result.DataSource, types.LifecycleDataSourceEndOfLifeDate)
+	}
+	if result.FetchedAt.IsZero() {
+		t.Error("FetchedAt should be non-zero")
 	}
 }
 

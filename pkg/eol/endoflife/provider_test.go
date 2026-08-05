@@ -10,15 +10,23 @@ import (
 	"github.com/block/Version-Guard/pkg/types"
 )
 
+func productCyclesResult(cycles []*ProductCycle) ProductCyclesResult {
+	return ProductCyclesResult{
+		Cycles:     cycles,
+		DataSource: types.LifecycleDataSourceEndOfLifeDate,
+		FetchedAt:  time.Now(),
+	}
+}
+
 func TestProvider_GetVersionLifecycle_PostgreSQL(t *testing.T) {
 	// Mock client with test data (using dates relative to 2026-04-08)
 	// Testing with PostgreSQL which uses STANDARD endoflife.date schema
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
+		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
 			if product != "amazon-rds-postgresql" {
 				t.Errorf("Expected product amazon-rds-postgresql, got %s", product)
 			}
-			return []*ProductCycle{
+			return productCyclesResult([]*ProductCycle{
 				{
 					// Current version - still in standard support
 					Cycle:           "16.2",
@@ -43,7 +51,7 @@ func TestProvider_GetVersionLifecycle_PostgreSQL(t *testing.T) {
 					EOL:             "2024-11-14", // Past (before 2026-04-08)
 					ExtendedSupport: false,
 				},
-			}, nil
+			}), nil
 		},
 	}
 
@@ -132,8 +140,8 @@ func TestProvider_GetVersionLifecycle_PostgreSQL(t *testing.T) {
 
 func TestProvider_ListAllVersions(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
-			return []*ProductCycle{
+		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
+			return productCyclesResult([]*ProductCycle{
 				{
 					Cycle:       "16.2",
 					ReleaseDate: "2024-05-09",
@@ -146,7 +154,7 @@ func TestProvider_ListAllVersions(t *testing.T) {
 					Support:     "2027-11-11",
 					EOL:         "2027-11-11",
 				},
-			}, nil
+			}), nil
 		},
 	}
 
@@ -176,16 +184,16 @@ func TestProvider_ListAllVersions(t *testing.T) {
 func TestProvider_Caching(t *testing.T) {
 	callCount := 0
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
+		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
 			callCount++
-			return []*ProductCycle{
+			return productCyclesResult([]*ProductCycle{
 				{
 					Cycle:       "16.2",
 					ReleaseDate: "2024-05-09",
 					Support:     "2028-11-09",
 					EOL:         "2028-11-09",
 				},
-			}, nil
+			}), nil
 		},
 	}
 
@@ -222,16 +230,16 @@ func TestProvider_Caching(t *testing.T) {
 func TestProvider_CacheExpiration(t *testing.T) {
 	callCount := 0
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
+		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
 			callCount++
-			return []*ProductCycle{
+			return productCyclesResult([]*ProductCycle{
 				{
 					Cycle:       "16.2",
 					ReleaseDate: "2024-05-09",
 					Support:     "2028-11-09",
 					EOL:         "2028-11-09",
 				},
-			}, nil
+			}), nil
 		},
 	}
 
@@ -262,15 +270,15 @@ func TestProvider_CacheExpiration(t *testing.T) {
 
 func TestProvider_VersionNotFound(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
-			return []*ProductCycle{
+		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
+			return productCyclesResult([]*ProductCycle{
 				{
 					Cycle:       "16.2",
 					ReleaseDate: "2024-05-09",
 					Support:     "2028-11-09",
 					EOL:         "2028-11-09",
 				},
-			}, nil
+			}), nil
 		},
 	}
 
@@ -319,18 +327,18 @@ func TestProvider_Engines(t *testing.T) {
 // product-specific endoflife.date field semantics stay out of Go code.
 func TestProvider_DeclarativeLifecycle(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(ctx context.Context, product string) ([]*ProductCycle, error) {
+		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
 			if product != "amazon-eks" {
 				t.Errorf("Expected product amazon-eks, got %s", product)
 			}
-			return []*ProductCycle{
+			return productCyclesResult([]*ProductCycle{
 				{
 					Cycle:           "1.32",
 					ReleaseDate:     "2024-11-19",
 					EOL:             "2026-12-19",
 					ExtendedSupport: "2027-12-19",
 				},
-			}, nil
+			}), nil
 		},
 	}
 
@@ -570,15 +578,15 @@ func TestProvider_InterfaceCompliance(t *testing.T) {
 // not currently derive upgrade targets from it.
 func TestProvider_ListAllVersions_PreservesCycleOrder(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(_ context.Context, _ string) ([]*ProductCycle, error) {
+		GetProductCyclesFunc: func(_ context.Context, _ string) (ProductCyclesResult, error) {
 			// Deliberately not in semver order — we want to assert
 			// ListAllVersions does NOT reorder.
-			return []*ProductCycle{
+			return productCyclesResult([]*ProductCycle{
 				{Cycle: "17", ReleaseDate: "2025-02-20", Support: "2030-02-28", EOL: "2030-02-28"},
 				{Cycle: "16", ReleaseDate: "2024-02-20", Support: "2029-02-28", EOL: "2029-02-28"},
 				{Cycle: "9.6", ReleaseDate: "2016-09-29", Support: "2021-11-11", EOL: "2021-11-11"},
 				{Cycle: "12", ReleaseDate: "2019-10-03", Support: "2024-11-14", EOL: "2024-11-14"},
-			}, nil
+			}), nil
 		},
 	}
 	provider, _ := NewProvider(mockClient, "amazon-rds-postgresql", "", 1*time.Hour, nil)
@@ -604,12 +612,12 @@ func TestProvider_ListAllVersions_PreservesCycleOrder(t *testing.T) {
 // regression that re-introduces shared cache mutation.
 func TestProvider_GetVersionLifecycle_ConcurrentSafe(t *testing.T) {
 	mockClient := &MockClient{
-		GetProductCyclesFunc: func(_ context.Context, _ string) ([]*ProductCycle, error) {
-			return []*ProductCycle{
+		GetProductCyclesFunc: func(_ context.Context, _ string) (ProductCyclesResult, error) {
+			return productCyclesResult([]*ProductCycle{
 				{Cycle: "17", ReleaseDate: "2025-02-20", Support: "2030-02-28", EOL: "2030-02-28"},
 				{Cycle: "16.2", ReleaseDate: "2024-05-09", Support: "2028-11-09", EOL: "2028-11-09"},
 				{Cycle: "12.18", ReleaseDate: "2020-11-12", Support: "2024-11-14", EOL: "2024-11-14"},
-			}, nil
+			}), nil
 		},
 	}
 	provider, _ := NewProvider(mockClient, "amazon-rds-postgresql", "", 1*time.Hour, nil)
