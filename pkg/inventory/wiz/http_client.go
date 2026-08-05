@@ -225,12 +225,12 @@ func (c *HTTPClient) GetReport(ctx context.Context, accessToken, reportID string
 func (c *HTTPClient) DownloadReport(ctx context.Context, downloadURL string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, http.NoBody)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create download request")
+		return nil, errors.New("failed to create download request")
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to download report")
+		return nil, errors.New("failed to download report")
 	}
 
 	if resp.StatusCode != http.StatusOK {

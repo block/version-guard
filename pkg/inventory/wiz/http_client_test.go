@@ -319,3 +319,36 @@ func TestDownloadReport_TransportError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "download")
 }
+
+func TestDownloadReport_MalformedURLRedactedFromError(t *testing.T) {
+	sensitiveQuery := "X-Amz-Credential=secret\nX-Amz-Signature=token"
+	downloadURL := "https://files.example/report.csv?" + sensitiveQuery
+
+	c := newTestHTTPClient("", "")
+	_, err := c.DownloadReport(context.Background(), downloadURL)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create download request")
+	assert.NotContains(t, err.Error(), downloadURL)
+	assert.NotContains(t, err.Error(), sensitiveQuery)
+	assert.NotContains(t, err.Error(), "X-Amz-Credential=secret")
+}
+
+func TestDownloadReport_TransportErrorRedactsURL(t *testing.T) {
+	sensitiveQuery := "X-Amz-Credential=secret&X-Amz-Signature=token"
+	downloadURL := "https://files.example/report.csv?" + sensitiveQuery
+	c := newTestHTTPClient("", "")
+	c.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("transport failed for %s", req.URL.String())
+	})
+
+	_, err := c.DownloadReport(context.Background(), downloadURL)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), downloadURL)
+	assert.NotContains(t, err.Error(), sensitiveQuery)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
