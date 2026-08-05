@@ -83,6 +83,12 @@ func TestValidateManifest(t *testing.T) {
 		{name: "invalid lifecycle data", mutate: func(t *testing.T, root string) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "api", "amazon-aurora-mysql.json"), []byte(`[{"cycle":"3","eol":42}]`), 0o600))
 		}, wantErr: "unsupported value type"},
+		{name: "malformed optional release date", mutate: func(t *testing.T, root string) {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "api", "amazon-aurora-mysql.json"), []byte(`[{"cycle":"3","releaseDate":"2026-1-01"}]`), 0o600))
+		}, wantErr: "releaseDate"},
+		{name: "malformed optional latest release date", mutate: func(t *testing.T, root string) {
+			require.NoError(t, os.WriteFile(filepath.Join(root, "api", "amazon-aurora-mysql.json"), []byte(`[{"cycle":"3","latestReleaseDate":"not-a-date"}]`), 0o600))
+		}, wantErr: "latestReleaseDate"},
 		{name: "API data is not an array", mutate: func(t *testing.T, root string) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "api", "amazon-aurora-mysql.json"), []byte(`null`), 0o600))
 		}, wantErr: "top-level array"},

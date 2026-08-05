@@ -142,9 +142,10 @@ func TestProvider_GetVersionLifecycle_PostgreSQL(t *testing.T) {
 }
 
 func TestProvider_ListAllVersions(t *testing.T) {
+	fetchedAt := time.Date(2026, time.August, 5, 14, 0, 0, 0, time.UTC)
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
-			return productCyclesResult([]*ProductCycle{
+			return ProductCyclesResult{Cycles: []*ProductCycle{
 				{
 					Cycle:       "16.2",
 					ReleaseDate: "2024-05-09",
@@ -157,7 +158,7 @@ func TestProvider_ListAllVersions(t *testing.T) {
 					Support:     "2027-11-11",
 					EOL:         "2027-11-11",
 				},
-			}), nil
+			}, DataSource: types.LifecycleDataSourceLocalOverride, FetchedAt: fetchedAt}, nil
 		},
 	}
 
@@ -181,6 +182,23 @@ func TestProvider_ListAllVersions(t *testing.T) {
 	}
 	if versions[0].Source != "endoflife-date-api" {
 		t.Errorf("Source = %s, want endoflife-date-api", versions[0].Source)
+	}
+	if versions[0].DataSource != types.LifecycleDataSourceLocalOverride || !versions[0].FetchedAt.Equal(fetchedAt) {
+		t.Errorf("metadata = (%q, %v), want (%q, %v)", versions[0].DataSource, versions[0].FetchedAt, types.LifecycleDataSourceLocalOverride, fetchedAt)
+	}
+
+	versions[0].Version = "mutated"
+	versions[0].Engine = "mutated"
+	versions[0].DataSource = types.LifecycleDataSourceUnknown
+	versionsAgain, err := provider.ListAllVersions(context.Background(), "postgres")
+	if err != nil {
+		t.Fatalf("second ListAllVersions() error = %v", err)
+	}
+	if versionsAgain[0].Version != "16.2" || versionsAgain[0].Engine != "postgres" || versionsAgain[0].DataSource != types.LifecycleDataSourceLocalOverride {
+		t.Errorf("returned mutation leaked into cache: %#v", versionsAgain[0])
+	}
+	if versionsAgain[0] == versions[0] {
+		t.Error("ListAllVersions returned the same lifecycle pointer across calls")
 	}
 }
 
@@ -324,6 +342,9 @@ func TestProvider_SourceErrorReturnsDiagnosticLifecycle(t *testing.T) {
 	if lifecycle == nil || lifecycle.UnknownCause != types.LifecycleUnknownCauseSourceError {
 		t.Fatalf("lifecycle = %#v, want source_error diagnostic", lifecycle)
 	}
+	if lifecycle.Version != "8.0" || lifecycle.Engine != "mysql" {
+		t.Errorf("diagnostic inventory identity not preserved: %#v", lifecycle)
+	}
 	if lifecycle.DataSource != types.LifecycleDataSourceLocalOverride || !lifecycle.FetchedAt.Equal(fetchedAt) {
 		t.Errorf("diagnostic metadata not preserved: %#v", lifecycle)
 	}
@@ -395,7 +416,15 @@ func TestProvider_ValidCycleWinsOverMalformedPrefix(t *testing.T) {
 }
 
 func TestValidateProductCycle(t *testing.T) {
-	invalid := []*ProductCycle{nil, {}, {Cycle: " "}, {Cycle: "8", Support: 42}, {Cycle: "8", EOL: "2026-1-01"}}
+	invalid := []*ProductCycle{
+		nil,
+		{},
+		{Cycle: " "},
+		{Cycle: "8", Support: 42},
+		{Cycle: "8", EOL: "2026-1-01"},
+		{Cycle: "8", ReleaseDate: "2026-1-01"},
+		{Cycle: "8", LatestReleaseDate: "not-a-date"},
+	}
 	for _, cycle := range invalid {
 		if err := ValidateProductCycle(cycle); err == nil {
 			t.Errorf("ValidateProductCycle(%#v) = nil, want error", cycle)

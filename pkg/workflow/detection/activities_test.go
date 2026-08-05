@@ -264,7 +264,7 @@ func TestFetchEOLData_EmptyVersionDoesNotCallProvider(t *testing.T) {
 
 func TestFetchEOLData_PreservesDiagnosticLifecycleOnError(t *testing.T) {
 	diagnostic := &types.VersionLifecycle{
-		Engine: "aurora-mysql", Source: "endoflife-date-api",
+		Version: "8.0.35", Engine: "aurora-mysql", Source: "endoflife-date-api",
 		DataSource:   types.LifecycleDataSourceEndOfLifeDate,
 		UnknownCause: types.LifecycleUnknownCauseSourceError,
 	}
@@ -286,6 +286,25 @@ func TestFetchEOLData_PreservesDiagnosticLifecycleOnError(t *testing.T) {
 	var output EOLResult
 	require.NoError(t, result.Get(&output))
 	assert.Equal(t, diagnostic, output.VersionLifecycles["aurora-mysql:8.0.35"])
+
+	detectEnv := newActivityEnv()
+	detectEnv.RegisterActivity(act.DetectDrift)
+	detectResult, err := detectEnv.ExecuteActivity(act.DetectDrift, DetectInput{
+		Resources: resourcesForDiagnosticVersion(), VersionLifecycles: output.VersionLifecycles,
+	})
+	require.NoError(t, err)
+	var detected DetectResult
+	require.NoError(t, detectResult.Get(&detected))
+	require.Len(t, detected.Findings, 1)
+	assert.Equal(t, "8.0.35", detected.Findings[0].EOL.Version)
+	assert.Equal(t, "aurora-mysql", detected.Findings[0].EOL.Engine)
+}
+
+func resourcesForDiagnosticVersion() []*types.Resource {
+	return []*types.Resource{{
+		ID: "diagnostic", Type: types.ResourceTypeAurora,
+		Engine: "aurora-mysql", CurrentVersion: "8.0.35",
+	}}
 }
 
 func TestFetchEOLData_NilLifecycleWithoutErrorIsUnattributed(t *testing.T) {

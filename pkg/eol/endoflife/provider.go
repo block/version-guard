@@ -124,9 +124,8 @@ func (p *Provider) Engines() []string {
 // on the returned VersionLifecycle for downstream display; product
 // resolution comes from p.product, set at construction time.
 //
-// Concurrency note: this function MUST NOT mutate the *VersionLifecycle
-// pointers it gets back from ListAllVersions — those are shared across
-// concurrent callers via the cache.
+// Concurrency note: cached lifecycle pointers are immutable. Public methods
+// return copies with caller-facing metadata applied.
 func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version string) (*types.VersionLifecycle, error) {
 	engine = strings.ToLower(engine)
 	version = strings.TrimSpace(version)
@@ -134,7 +133,7 @@ func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version stri
 	cached, err := p.loadVersions(ctx, engine)
 	if err != nil {
 		return &types.VersionLifecycle{
-			Engine: engine, Source: p.Name(), DataSource: cached.dataSource,
+			Version: version, Engine: engine, Source: p.Name(), DataSource: cached.dataSource,
 			FetchedAt: cached.fetchedAt, UnknownCause: types.LifecycleUnknownCauseSourceError,
 		}, err
 	}
@@ -218,7 +217,11 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 	if err != nil {
 		return nil, err
 	}
-	return cached.versions, nil
+	versions := make([]*types.VersionLifecycle, len(cached.versions))
+	for i, lifecycle := range cached.versions {
+		versions[i] = lifecycleWithMetadata(lifecycle, engine, cached)
+	}
+	return versions, nil
 }
 
 func (p *Provider) loadVersions(ctx context.Context, engine string) (*cachedVersions, error) {
@@ -323,10 +326,26 @@ func ValidateProductCycle(cycle *ProductCycle) error {
 	if strings.TrimSpace(cycle.Cycle) == "" {
 		return errors.New("cycle identifier is empty")
 	}
+	for name, value := range map[string]string{"releaseDate": cycle.ReleaseDate, "latestReleaseDate": cycle.LatestReleaseDate} {
+		if err := validateOptionalDate(value); err != nil {
+			return errors.Wrapf(err, "%s for cycle %q", name, cycle.Cycle)
+		}
+	}
 	for name, value := range map[string]any{"support": cycle.Support, "eol": cycle.EOL, "extendedSupport": cycle.ExtendedSupport, "lts": cycle.LTS} {
 		if err := validateDateOrBoolean(value); err != nil {
 			return errors.Wrapf(err, "%s for cycle %q", name, cycle.Cycle)
 		}
+	}
+	return nil
+}
+
+func validateOptionalDate(value string) error {
+	if value == "" {
+		return nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil || parsed.Format("2006-01-02") != value {
+		return errors.New("must use YYYY-MM-DD")
 	}
 	return nil
 }
