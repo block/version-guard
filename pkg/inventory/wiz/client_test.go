@@ -59,11 +59,11 @@ func TestClient_GetReportData_Success(t *testing.T) {
 
 func TestClient_GetReportData_CSVCompleteness(t *testing.T) {
 	tests := []struct {
-		name         string
-		expectedRows int
 		csv          string
-		wantRows     int
+		name         string
 		wantErr      string
+		expectedRows int
+		wantRows     int
 	}{
 		{name: "valid zero result", expectedRows: 0, csv: WizAPIFixtures.EmptyCSVData, wantRows: 1},
 		{name: "missing header", expectedRows: 0, csv: "", wantErr: "has no header"},

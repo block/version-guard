@@ -86,21 +86,21 @@ type graphQLResponse struct {
 }
 
 type reportRunResponse struct {
-	Status  string    `json:"status"`
-	URL     string    `json:"url"`
 	RunAt   time.Time `json:"runAt"`
 	Results *struct {
-		Type     string `json:"__typename"`
 		RowCount *int   `json:"rowCount"`
+		Type     string `json:"__typename"`
 	} `json:"results"`
+	Status string `json:"status"`
+	URL    string `json:"url"`
 }
 
 type reportResponse struct {
 	Report *struct {
+		LastRun          *reportRunResponse `json:"lastRun"`
 		ID               string             `json:"id"`
 		Name             string             `json:"name"`
 		RunIntervalHours int                `json:"runIntervalHours"`
-		LastRun          *reportRunResponse `json:"lastRun"`
 	} `json:"report"`
 }
 
@@ -161,63 +161,71 @@ func (c *HTTPClient) GetReport(ctx context.Context, accessToken, reportID string
 		return nil, errors.Wrapf(err, "failed to get report %s", reportID)
 	}
 
-	if result.Report == nil {
+	return validateReportMetadata(result.Report, reportID, time.Now().UTC())
+}
+
+func validateReportMetadata(report *struct {
+	LastRun          *reportRunResponse `json:"lastRun"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	RunIntervalHours int                `json:"runIntervalHours"`
+}, reportID string, now time.Time) (*Report, error) {
+	if report == nil {
 		return nil, errors.Errorf("report %s not found", reportID)
 	}
-	if result.Report.ID != reportID {
-		return nil, errors.Errorf("report identity mismatch: requested %s, received %s", reportID, result.Report.ID)
+	if report.ID != reportID {
+		return nil, errors.Errorf("report identity mismatch: requested %s, received %s", reportID, report.ID)
 	}
-	if strings.TrimSpace(result.Report.Name) == "" {
+	if strings.TrimSpace(report.Name) == "" {
 		return nil, errors.Errorf("report %s has no name", reportID)
 	}
-	if result.Report.LastRun == nil {
+	if report.LastRun == nil {
 		return nil, errors.Errorf("report %s has no last run", reportID)
 	}
-	if result.Report.LastRun.Status != "COMPLETED" {
-		return nil, errors.Errorf("report %s run status is %s", reportID, result.Report.LastRun.Status)
+	if report.LastRun.Status != "COMPLETED" {
+		return nil, errors.Errorf("report %s run status is %s", reportID, report.LastRun.Status)
 	}
-	if strings.TrimSpace(result.Report.LastRun.URL) == "" {
+	if strings.TrimSpace(report.LastRun.URL) == "" {
 		return nil, errors.Errorf("report %s has no download URL", reportID)
 	}
-	if result.Report.LastRun.RunAt.IsZero() {
+	if report.LastRun.RunAt.IsZero() {
 		return nil, errors.Errorf("report %s has no run time", reportID)
 	}
-	if result.Report.RunIntervalHours <= 0 {
-		return nil, errors.Errorf("report %s has invalid run interval %d hours", reportID, result.Report.RunIntervalHours)
+	if report.RunIntervalHours <= 0 {
+		return nil, errors.Errorf("report %s has invalid run interval %d hours", reportID, report.RunIntervalHours)
 	}
-	if result.Report.LastRun.Results == nil {
+	if report.LastRun.Results == nil {
 		return nil, errors.Errorf("report %s has no run results", reportID)
 	}
-	resultType := result.Report.LastRun.Results.Type
+	resultType := report.LastRun.Results.Type
 	switch resultType {
 	case "ReportRunResultsGraphQuery", "ReportRunResultsCloudResource", "ReportRunResultsCloudResourceV2":
 	default:
 		return nil, errors.Errorf("report %s has unsupported result type %q", reportID, resultType)
 	}
-	if result.Report.LastRun.Results.RowCount == nil {
+	if report.LastRun.Results.RowCount == nil {
 		return nil, errors.Errorf("report %s has no row count", reportID)
 	}
-	if *result.Report.LastRun.Results.RowCount < 0 {
-		return nil, errors.Errorf("report %s has invalid row count %d", reportID, *result.Report.LastRun.Results.RowCount)
+	if *report.LastRun.Results.RowCount < 0 {
+		return nil, errors.Errorf("report %s has invalid row count %d", reportID, *report.LastRun.Results.RowCount)
 	}
 
-	now := time.Now().UTC()
-	if result.Report.LastRun.RunAt.After(now.Add(maxFutureClockSkew)) {
-		return nil, errors.Errorf("report %s run time %s is in the future beyond allowed clock skew %s", reportID, result.Report.LastRun.RunAt, maxFutureClockSkew)
+	if report.LastRun.RunAt.After(now.Add(maxFutureClockSkew)) {
+		return nil, errors.Errorf("report %s run time %s is in the future beyond allowed clock skew %s", reportID, report.LastRun.RunAt, maxFutureClockSkew)
 	}
-	maxAge := time.Duration(result.Report.RunIntervalHours)*time.Hour + reportFreshnessGrace
-	age := now.Sub(result.Report.LastRun.RunAt)
+	maxAge := time.Duration(report.RunIntervalHours)*time.Hour + reportFreshnessGrace
+	age := now.Sub(report.LastRun.RunAt)
 	if age > maxAge {
 		return nil, errors.Errorf("report %s run is stale: age %s exceeds maximum %s", reportID, age, maxAge)
 	}
 
 	return &Report{
-		ID:               result.Report.ID,
-		Name:             result.Report.Name,
-		DownloadURL:      result.Report.LastRun.URL,
-		LastRun:          result.Report.LastRun.RunAt,
-		RunIntervalHours: result.Report.RunIntervalHours,
-		ExpectedRows:     *result.Report.LastRun.Results.RowCount,
+		ID:               report.ID,
+		Name:             report.Name,
+		DownloadURL:      report.LastRun.URL,
+		LastRun:          report.LastRun.RunAt,
+		RunIntervalHours: report.RunIntervalHours,
+		ExpectedRows:     *report.LastRun.Results.RowCount,
 	}, nil
 }
 
