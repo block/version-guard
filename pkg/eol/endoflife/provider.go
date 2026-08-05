@@ -42,8 +42,13 @@ type Provider struct {
 
 //nolint:govet // field alignment sacrificed for readability
 type cachedVersions struct {
-	versions  []*types.VersionLifecycle
-	fetchedAt time.Time
+	versions        []*types.VersionLifecycle
+	malformedCycles []string
+	fetchedAt       time.Time
+	cachedAt        time.Time
+	dataSource      types.LifecycleDataSource
+	productCause    types.LifecycleUnknownCause
+	fetchErr        error
 }
 
 // NewProvider creates a new endoflife.date EOL provider bound to a single
@@ -126,10 +131,12 @@ func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version stri
 	engine = strings.ToLower(engine)
 	version = strings.TrimSpace(version)
 
-	// Fetch all versions
-	versions, err := p.ListAllVersions(ctx, engine)
+	cached, err := p.loadVersions(ctx, engine)
 	if err != nil {
-		return nil, err
+		return &types.VersionLifecycle{
+			Engine: engine, Source: p.Name(), DataSource: cached.dataSource,
+			FetchedAt: cached.fetchedAt, UnknownCause: types.LifecycleUnknownCauseSourceError,
+		}, err
 	}
 
 	// Find the specific version — try exact match first, then prefix match.
@@ -137,10 +144,10 @@ func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version stri
 	// reports full versions (e.g., "8.0.35", "7.1.0").
 	var bestMatch *types.VersionLifecycle
 	bestMatchLen := 0
-	for _, v := range versions {
+	for _, v := range cached.versions {
 		cycleVersion := strings.TrimSpace(v.Version)
 		if cycleVersion == version {
-			return v, nil
+			return lifecycleWithMetadata(v, engine, cached), nil
 		}
 		if strings.HasPrefix(version, cycleVersion+".") && len(cycleVersion) > bestMatchLen {
 			bestMatch = v
@@ -148,7 +155,14 @@ func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version stri
 		}
 	}
 	if bestMatch != nil {
-		return bestMatch, nil
+		return lifecycleWithMetadata(bestMatch, engine, cached), nil
+	}
+	cause := cached.productCause
+	if cause == "" {
+		cause = types.LifecycleUnknownCauseCycleNotFound
+		if matchingCycle(cached.malformedCycles, version) {
+			cause = types.LifecycleUnknownCauseMalformedCycle
+		}
 	}
 
 	// Version not found - return unknown lifecycle (empty Version signals missing data)
@@ -163,12 +177,32 @@ func (p *Provider) GetVersionLifecycle(ctx context.Context, engine, version stri
 	// losing visibility into resources with incomplete EOL data coverage.
 	//
 	return &types.VersionLifecycle{
-		Version:     "", // Empty = unknown data, not unsupported version
-		Engine:      engine,
-		IsSupported: false,
-		Source:      p.Name(),
-		FetchedAt:   time.Now(),
+		Version:      "", // Empty = unknown data, not unsupported version
+		Engine:       engine,
+		IsSupported:  false,
+		Source:       p.Name(),
+		FetchedAt:    cached.fetchedAt,
+		DataSource:   cached.dataSource,
+		UnknownCause: cause,
 	}, nil
+}
+
+func lifecycleWithMetadata(lifecycle *types.VersionLifecycle, engine string, cached *cachedVersions) *types.VersionLifecycle {
+	result := *lifecycle
+	result.Engine = engine
+	result.FetchedAt = cached.fetchedAt
+	result.DataSource = cached.dataSource
+	return &result
+}
+
+func matchingCycle(cycles []string, version string) bool {
+	for _, cycle := range cycles {
+		cycle = strings.TrimSpace(cycle)
+		if cycle == version || strings.HasPrefix(version, cycle+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // ListAllVersions retrieves all versions for the provider's product.
@@ -180,6 +214,14 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 	// Normalize engine (used only as a label on returned VersionLifecycles)
 	engine = strings.ToLower(engine)
 
+	cached, err := p.loadVersions(ctx, engine)
+	if err != nil {
+		return nil, err
+	}
+	return cached.versions, nil
+}
+
+func (p *Provider) loadVersions(ctx context.Context, engine string) (*cachedVersions, error) {
 	product := p.product
 
 	// Use product as cache key
@@ -188,10 +230,9 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 	// Check cache first (fast path)
 	p.mu.RLock()
 	if cached, found := p.cache[cacheKey]; found {
-		if time.Since(cached.fetchedAt) < p.cacheTTL {
-			versions := cached.versions
+		if time.Since(cached.cachedAt) < p.cacheTTL {
 			p.mu.RUnlock()
-			return versions, nil
+			return cached, nil
 		}
 	}
 	p.mu.RUnlock()
@@ -199,7 +240,7 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 	// Cache miss or expired - use singleflight to prevent thundering herd
 	result, err, _ := p.group.Do(cacheKey, func() (interface{}, error) {
 		// Fetch from endoflife.date API (only one goroutine executes this)
-		result, err := p.client.GetProductCycles(ctx, product)
+		cyclesResult, err := p.client.GetProductCycles(ctx, product)
 		if err != nil {
 			// 404 (product not yet on endoflife.date — new product or
 			// pending PR like aurora-mysql) is treated as an empty
@@ -213,23 +254,36 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 					"engine", engine,
 					"product", product,
 					"note", "This may be a new product or pending PR on endoflife.date")
-				empty := []*types.VersionLifecycle{}
-				p.mu.Lock()
-				p.cache[cacheKey] = &cachedVersions{
-					versions:  empty,
-					fetchedAt: time.Now(),
+				entry := &cachedVersions{
+					versions:     []*types.VersionLifecycle{},
+					fetchedAt:    cyclesResult.FetchedAt,
+					cachedAt:     time.Now(),
+					dataSource:   cyclesResult.DataSource,
+					productCause: types.LifecycleUnknownCauseProductNotFound,
 				}
+				p.mu.Lock()
+				p.cache[cacheKey] = entry
 				p.mu.Unlock()
-				return empty, nil
+				return entry, nil
 			}
-			return nil, errors.Wrapf(err, "failed to fetch cycles for product %s", product)
+			return &cachedVersions{fetchedAt: cyclesResult.FetchedAt, dataSource: cyclesResult.DataSource,
+				fetchErr: errors.Wrapf(err, "failed to fetch cycles for product %s", product)}, nil
 		}
 
 		// Convert to our types
 		var versions []*types.VersionLifecycle
-		for _, cycle := range result.Cycles {
+		var malformedCycles []string
+		for _, cycle := range cyclesResult.Cycles {
+			if err := ValidateProductCycle(cycle); err != nil {
+				if cycle != nil && strings.TrimSpace(cycle.Cycle) != "" {
+					malformedCycles = append(malformedCycles, strings.TrimSpace(cycle.Cycle))
+				}
+				p.logger.WarnContext(ctx, "invalid EOL cycle, skipping", "engine", engine, "product", product, "error", err)
+				continue
+			}
 			lifecycle, err := p.convertCycle(engine, product, cycle)
 			if err != nil {
+				malformedCycles = append(malformedCycles, strings.TrimSpace(cycle.Cycle))
 				// Skip cycles we can't parse, but log a warning
 				p.logger.WarnContext(ctx, "failed to convert EOL cycle, skipping",
 					"engine", engine,
@@ -242,24 +296,55 @@ func (p *Provider) ListAllVersions(ctx context.Context, engine string) ([]*types
 
 		// Cache the result
 		p.mu.Lock()
-		p.cache[cacheKey] = &cachedVersions{
-			versions:  versions,
-			fetchedAt: time.Now(),
-		}
+		entry := &cachedVersions{versions: versions, malformedCycles: malformedCycles,
+			fetchedAt: cyclesResult.FetchedAt, cachedAt: time.Now(), dataSource: cyclesResult.DataSource}
+		p.cache[cacheKey] = entry
 		p.mu.Unlock()
 
-		return versions, nil
+		return entry, nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	versions, ok := result.([]*types.VersionLifecycle)
+	cached, ok := result.(*cachedVersions)
 	if !ok {
-		return nil, errors.New("failed to convert result to VersionLifecycle slice")
+		return nil, errors.New("failed to convert result to cached versions")
 	}
-	return versions, nil
+	return cached, cached.fetchErr
+}
+
+// ValidateProductCycle enforces the date-or-boolean fields accepted by runtime adapters.
+func ValidateProductCycle(cycle *ProductCycle) error {
+	if cycle == nil {
+		return errors.New("cycle is nil")
+	}
+	if strings.TrimSpace(cycle.Cycle) == "" {
+		return errors.New("cycle identifier is empty")
+	}
+	for name, value := range map[string]any{"support": cycle.Support, "eol": cycle.EOL, "extendedSupport": cycle.ExtendedSupport, "lts": cycle.LTS} {
+		if err := validateDateOrBoolean(value); err != nil {
+			return errors.Wrapf(err, "%s for cycle %q", name, cycle.Cycle)
+		}
+	}
+	return nil
+}
+
+func validateDateOrBoolean(value any) error {
+	switch value := value.(type) {
+	case nil, bool:
+		return nil
+	case string:
+		value = strings.TrimSpace(value)
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		_, err := time.Parse("2006-01-02", value)
+		return err
+	default:
+		return errors.Errorf("unsupported value type %T", value)
+	}
 }
 
 // convertCycle delegates the cycle→VersionLifecycle conversion to the

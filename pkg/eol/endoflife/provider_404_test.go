@@ -5,7 +5,9 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/block/Version-Guard/pkg/types"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,9 +18,10 @@ import (
 // The provider must treat ErrProductNotFound as a recoverable signal and
 // return an UNKNOWN lifecycle, not error out.
 func TestProvider_GetVersionLifecycle_Product404(t *testing.T) {
+	fetchedAt := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(_ context.Context, product string) (ProductCyclesResult, error) {
-			return ProductCyclesResult{}, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
+			return ProductCyclesResult{DataSource: types.LifecycleDataSourceLocalOverride, FetchedAt: fetchedAt}, pkgerrors.Wrapf(ErrProductNotFound, "product %q", product)
 		},
 	}
 
@@ -34,6 +37,10 @@ func TestProvider_GetVersionLifecycle_Product404(t *testing.T) {
 	assert.Equal(t, "", lifecycle.Version, "Version should be empty for UNKNOWN")
 	assert.Equal(t, "aurora-mysql", lifecycle.Engine)
 	assert.False(t, lifecycle.IsSupported, "IsSupported should be false for UNKNOWN")
+	assert.Equal(t, provider.Name(), lifecycle.Source)
+	assert.Equal(t, types.LifecycleUnknownCauseProductNotFound, lifecycle.UnknownCause)
+	assert.Equal(t, types.LifecycleDataSourceLocalOverride, lifecycle.DataSource)
+	assert.Equal(t, fetchedAt, lifecycle.FetchedAt)
 }
 
 // TestProvider_ListAllVersions_Product404 tests that ListAllVersions returns

@@ -2,6 +2,7 @@ package endoflife
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -269,16 +270,17 @@ func TestProvider_CacheExpiration(t *testing.T) {
 }
 
 func TestProvider_VersionNotFound(t *testing.T) {
+	fetchedAt := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	mockClient := &MockClient{
 		GetProductCyclesFunc: func(ctx context.Context, product string) (ProductCyclesResult, error) {
-			return productCyclesResult([]*ProductCycle{
+			return ProductCyclesResult{Cycles: []*ProductCycle{
 				{
 					Cycle:       "16.2",
 					ReleaseDate: "2024-05-09",
 					Support:     "2028-11-09",
 					EOL:         "2028-11-09",
 				},
-			}), nil
+			}, DataSource: types.LifecycleDataSourceEndOfLifeDate, FetchedAt: fetchedAt}, nil
 		},
 	}
 
@@ -298,6 +300,88 @@ func TestProvider_VersionNotFound(t *testing.T) {
 	}
 	if lifecycle.Engine != "postgres" {
 		t.Errorf("Engine = %s, want postgres", lifecycle.Engine)
+	}
+	if lifecycle.UnknownCause != types.LifecycleUnknownCauseCycleNotFound {
+		t.Errorf("UnknownCause = %q, want %q", lifecycle.UnknownCause, types.LifecycleUnknownCauseCycleNotFound)
+	}
+	if lifecycle.DataSource != types.LifecycleDataSourceEndOfLifeDate || !lifecycle.FetchedAt.Equal(fetchedAt) {
+		t.Errorf("metadata = (%q, %v), want (%q, %v)", lifecycle.DataSource, lifecycle.FetchedAt, types.LifecycleDataSourceEndOfLifeDate, fetchedAt)
+	}
+}
+
+func TestProvider_SourceErrorReturnsDiagnosticLifecycle(t *testing.T) {
+	fetchedAt := time.Date(2026, time.August, 5, 13, 0, 0, 0, time.UTC)
+	provider, _ := NewProvider(&MockClient{GetProductCyclesFunc: func(context.Context, string) (ProductCyclesResult, error) {
+		return ProductCyclesResult{DataSource: types.LifecycleDataSourceLocalOverride, FetchedAt: fetchedAt}, errors.New("status 500")
+	}}, "mysql", "", time.Hour, nil)
+
+	lifecycle, err := provider.GetVersionLifecycle(context.Background(), "mysql", "8.0")
+	if err == nil {
+		t.Fatal("expected source error")
+	}
+	if lifecycle == nil || lifecycle.UnknownCause != types.LifecycleUnknownCauseSourceError {
+		t.Fatalf("lifecycle = %#v, want source_error diagnostic", lifecycle)
+	}
+	if lifecycle.DataSource != types.LifecycleDataSourceLocalOverride || !lifecycle.FetchedAt.Equal(fetchedAt) {
+		t.Errorf("diagnostic metadata not preserved: %#v", lifecycle)
+	}
+}
+
+func TestProvider_MalformedMatchingCycle(t *testing.T) {
+	tests := []struct {
+		name, version string
+		wantCause     types.LifecycleUnknownCause
+	}{
+		{name: "matching malformed cycle", version: "8.0.35", wantCause: types.LifecycleUnknownCauseMalformedCycle},
+		{name: "unrelated malformed cycle", version: "9.0", wantCause: types.LifecycleUnknownCauseCycleNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider, _ := NewProvider(&MockClient{GetProductCyclesFunc: func(context.Context, string) (ProductCyclesResult, error) {
+				return productCyclesResult([]*ProductCycle{
+					{Cycle: "8.0", EOL: "not-a-date"},
+					{Cycle: "7", Support: "invalid"},
+				}), nil
+			}}, "mysql", "", time.Hour, nil)
+			lifecycle, err := provider.GetVersionLifecycle(context.Background(), "mysql", tt.version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lifecycle.UnknownCause != tt.wantCause {
+				t.Errorf("UnknownCause = %q, want %q", lifecycle.UnknownCause, tt.wantCause)
+			}
+		})
+	}
+}
+
+func TestProvider_ValidCycleWinsOverMalformedPrefix(t *testing.T) {
+	provider, _ := NewProvider(&MockClient{GetProductCyclesFunc: func(context.Context, string) (ProductCyclesResult, error) {
+		return productCyclesResult([]*ProductCycle{
+			{Cycle: "8", EOL: "invalid"},
+			{Cycle: "8.0", EOL: "2030-01-01"},
+		}), nil
+	}}, "mysql", "", time.Hour, nil)
+	lifecycle, err := provider.GetVersionLifecycle(context.Background(), "mysql", "8.0.35")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle.Version != "8.0" || lifecycle.UnknownCause != "" {
+		t.Fatalf("lifecycle = %#v, want valid 8.0 cycle", lifecycle)
+	}
+}
+
+func TestValidateProductCycle(t *testing.T) {
+	invalid := []*ProductCycle{nil, {}, {Cycle: " "}, {Cycle: "8", Support: 42}, {Cycle: "8", EOL: "2026-1-01"}}
+	for _, cycle := range invalid {
+		if err := ValidateProductCycle(cycle); err == nil {
+			t.Errorf("ValidateProductCycle(%#v) = nil, want error", cycle)
+		}
+	}
+	valid := []*ProductCycle{{Cycle: "8"}, {Cycle: "8", Support: true, EOL: "false", ExtendedSupport: "", LTS: "2026-01-01"}}
+	for _, cycle := range valid {
+		if err := ValidateProductCycle(cycle); err != nil {
+			t.Errorf("ValidateProductCycle(%#v) = %v", cycle, err)
+		}
 	}
 }
 

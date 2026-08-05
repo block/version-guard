@@ -8,7 +8,9 @@ import (
 
 // Provider defines the interface for fetching version lifecycle (EOL) data
 type Provider interface {
-	// GetVersionLifecycle retrieves lifecycle information for a specific engine version
+	// GetVersionLifecycle retrieves lifecycle information for a specific engine version.
+	// Implementations may return a non-nil diagnostic lifecycle with a non-nil error;
+	// callers should preserve that lifecycle when reporting the failure.
 	GetVersionLifecycle(ctx context.Context, engine, version string) (*types.VersionLifecycle, error)
 
 	// ListAllVersions retrieves all known versions for an engine
