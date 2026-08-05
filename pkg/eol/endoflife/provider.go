@@ -331,6 +331,7 @@ func ValidateProductCycle(cycle *ProductCycle) error {
 	return nil
 }
 
+//nolint:goconst // These strings are the accepted wire representations, not domain constants.
 func validateDateOrBoolean(value any) error {
 	switch value := value.(type) {
 	case nil, bool:

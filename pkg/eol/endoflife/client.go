@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/block/Version-Guard/pkg/types"
 	"github.com/pkg/errors"
+
+	"github.com/block/Version-Guard/pkg/types"
 )
 
 const (
@@ -42,6 +43,8 @@ type Client interface {
 }
 
 // ProductCyclesResult contains lifecycle cycles and metadata about their source.
+//
+//nolint:govet // Field order groups the response payload before its attribution metadata.
 type ProductCyclesResult struct {
 	Cycles     []*ProductCycle
 	FetchedAt  time.Time
@@ -50,8 +53,6 @@ type ProductCyclesResult struct {
 
 // ProductCycle represents a single version/cycle from endoflife.date API
 // API docs: https://endoflife.date/docs/api/
-//
-//nolint:govet // field order matches endoflife.date API response shape for readability
 type ProductCycle struct {
 	Cycle             string `json:"cycle"`             // Version identifier (e.g., "1.31")
 	ReleaseDate       string `json:"releaseDate"`       // Release date (YYYY-MM-DD)

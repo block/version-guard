@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/block/Version-Guard/pkg/types"
 	pkgerrors "github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/block/Version-Guard/pkg/types"
 )
 
 // TestProvider_GetVersionLifecycle_Product404 tests graceful degradation when

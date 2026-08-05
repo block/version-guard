@@ -328,7 +328,36 @@ type VersionPolicy interface {
 - 🔴 **RED**: Past EOL, deprecated, or extended support expired
 - 🟡 **YELLOW**: In extended support or approaching EOL (< 90 days)
 - 🟢 **GREEN**: In standard support, current version
-- ⚪ **UNKNOWN**: Version not found in EOL database
+- ⚪ **UNKNOWN**: Lifecycle lookup or classification was inconclusive
+
+UNKNOWN findings use a bounded cause vocabulary: `product_not_found`,
+`cycle_not_found`, `source_error`, `malformed_cycle`,
+`empty_inventory_version`, `lifecycle_mismatch`,
+`indeterminate_lifecycle`, and `unattributed`.
+
+### Lifecycle attribution and diagnostics
+
+The endoflife.date client records where each lifecycle response came from.
+Requests sent directly to the default `https://endoflife.date/api` endpoint
+resolve to `endoflife_date`. The nginx override shim marks local JSON responses
+as `local_override` and proxied upstream responses as `endoflife_date` using
+the trusted `X-Version-Guard-EOL-Source` response header. Custom or otherwise
+untrusted endpoints default to `unknown` unless they provide one of those
+recognized header values; arbitrary values are not propagated.
+
+Each snapshot finding's `eol` object preserves `unknown_cause`, `data_source`,
+`engine`, and `version` for drill-down. Prometheus uses only bounded labels:
+`version_guard_detection_unknown_resources{resource_type,cause}` and
+`version_guard_detection_lifecycle_resources{resource_type,source}`. Engine
+and version are intentionally excluded from labels to avoid unbounded
+cardinality.
+
+Local overrides are governed by the machine-readable
+[`deploy/endoflife-override/manifest.json`](./deploy/endoflife-override/manifest.json).
+The [override policy and validation workflow](./deploy/endoflife-override/README.md)
+requires ownership, provenance, review dates, one-to-one manifest/file
+coverage, and runtime-compatible lifecycle data. Overdue reviews warn; invalid
+metadata or lifecycle data fails validation.
 
 ### 4. Detection Pipeline
 

@@ -188,6 +188,21 @@ The same OpenMetrics endpoint exports `temporal_*`, `version_guard_*`,
 `go_*`, and `process_*` series. Datadog/BPCI scrape configuration must allow
 all four families for the RCA dashboard panels to populate.
 
+Lifecycle diagnostics are exposed through two bounded-cardinality gauges:
+
+- `version_guard_detection_unknown_resources{resource_type,cause}` reports the
+  latest UNKNOWN count. `cause` is one of `product_not_found`,
+  `cycle_not_found`, `source_error`, `malformed_cycle`,
+  `empty_inventory_version`, `lifecycle_mismatch`,
+  `indeterminate_lifecycle`, or `unattributed`.
+- `version_guard_detection_lifecycle_resources{resource_type,source}` reports
+  the latest resource count by lifecycle source. `source` is one of
+  `endoflife_date`, `local_override`, or `unknown`.
+
+Prometheus deliberately does not label these metrics with engine or version,
+which would create unbounded series. Use the snapshot `eol` object's
+`unknown_cause`, `data_source`, `engine`, and `version` fields for drill-down.
+
 #### End-to-end with `make compose-*`
 
 The same commands work for everyone — they auto-detect whether a webhook-style emitter is present and adjust accordingly:
@@ -473,7 +488,13 @@ See `./bin/version-guard --help` for all options.
 | 🔴 **RED** | Past EOL, deprecated, extended support expired | Urgent upgrade required |
 | 🟡 **YELLOW** | In extended support (costly), approaching EOL (< 90 days) | Plan upgrade soon |
 | 🟢 **GREEN** | In standard support, current version | Compliant |
-| ⚪ **UNKNOWN** | Version not found in EOL database | Investigate |
+| ⚪ **UNKNOWN** | Lifecycle lookup or classification was inconclusive (see bounded causes below) | Investigate |
+
+UNKNOWN is attributed to one of: `product_not_found`, `cycle_not_found`,
+`source_error`, `malformed_cycle`, `empty_inventory_version`,
+`lifecycle_mismatch`, `indeterminate_lifecycle`, or `unattributed`. The
+snapshot `eol` object preserves the cause and lifecycle source alongside the
+engine and version for diagnosis.
 
 ## 🔌 Extending Version Guard
 
@@ -565,6 +586,7 @@ constants used in tests.
           "version": "5.7",
           "engine": "mysql",
           "source": "endoflife-date-api",
+          "data_source": "local_override",
           "is_supported": true,
           "is_deprecated": true,
           "is_extended_support": true,

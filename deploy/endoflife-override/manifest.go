@@ -20,8 +20,8 @@ const (
 )
 
 type manifest struct {
-	SchemaVersion int                `json:"schema_version"`
 	Overrides     []manifestOverride `json:"overrides"`
+	SchemaVersion int                `json:"schema_version"`
 }
 
 type manifestOverride struct {
@@ -62,8 +62,8 @@ func validateManifest(root string, now time.Time, warnings io.Writer) error {
 	paths := make(map[string]struct{}, len(m.Overrides))
 	for index := range m.Overrides {
 		override := &m.Overrides[index]
-		if err := validateOverride(root, override, now.UTC(), warnings, products, paths); err != nil {
-			return fmt.Errorf("override %d: %w", index, err)
+		if validationErr := validateOverride(root, override, now.UTC(), warnings, products, paths); validationErr != nil {
+			return fmt.Errorf("override %d: %w", index, validationErr)
 		}
 	}
 
@@ -102,6 +102,7 @@ func readManifest(path string) (*manifest, error) {
 	return &m, nil
 }
 
+//nolint:gocyclo // Validation intentionally reports the first field-specific policy violation.
 func validateOverride(root string, override *manifestOverride, now time.Time, warnings io.Writer, products, paths map[string]struct{}) error {
 	required := []struct {
 		name  string

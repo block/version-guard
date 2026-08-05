@@ -181,6 +181,8 @@ type VersionLifecycle struct {
 // typed. Optional descriptive attributes — human-readable name, cloud
 // account, region, and any YAML-defined extras — live in Extra under
 // their YAML logical name. Wire-shape is locked by snapshot v3.
+//
+//nolint:govet // Preserve the established Finding field order and snapshot compatibility.
 type Finding struct {
 	// Tags are the resource's key-value metadata (e.g., AWS resource tags)
 	Tags map[string]string `json:",omitempty"`
