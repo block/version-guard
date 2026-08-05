@@ -57,24 +57,42 @@ func TestClient_GetReportData_Success(t *testing.T) {
 	mockWizClient.AssertExpectations(t)
 }
 
-func TestClient_GetReportData_EmptyReport(t *testing.T) {
-	ctx := context.Background()
+func TestClient_GetReportData_CSVCompleteness(t *testing.T) {
+	tests := []struct {
+		name         string
+		expectedRows int
+		csv          string
+		wantRows     int
+		wantErr      string
+	}{
+		{name: "valid zero result", expectedRows: 0, csv: WizAPIFixtures.EmptyCSVData, wantRows: 1},
+		{name: "missing header", expectedRows: 0, csv: "", wantErr: "has no header"},
+		{name: "broken header only", expectedRows: 5, csv: WizAPIFixtures.EmptyCSVData, wantErr: "expected 5 data rows, downloaded 0"},
+		{name: "truncated data", expectedRows: 2, csv: "id,name\n1,one\n", wantErr: "expected 2 data rows, downloaded 1"},
+	}
 
-	mockWizClient := new(MockWizClient)
-	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)
-	mockWizClient.On("GetReport", mock.Anything, mock.Anything, mock.Anything).Return(WizAPIFixtures.AuroraReport, nil)
-	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).Return(NewMockReadCloser(WizAPIFixtures.EmptyCSVData), nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := *WizAPIFixtures.AuroraReport
+			report.ExpectedRows = tt.expectedRows
 
-	client := NewClient(mockWizClient, time.Hour)
+			mockWizClient := new(MockWizClient)
+			mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)
+			mockWizClient.On("GetReport", mock.Anything, mock.Anything, mock.Anything).Return(&report, nil)
+			mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).Return(NewMockReadCloser(tt.csv), nil)
 
-	// Execute: Get empty report (only has header row)
-	rows, err := client.GetReportData(ctx, "empty-report-id")
+			rows, err := NewClient(mockWizClient, time.Hour).GetReportData(context.Background(), "report-id")
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				require.Nil(t, rows)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, rows, tt.wantRows)
+			}
 
-	// Verify: Returns header row only (this is valid CSV, not an error)
-	require.NoError(t, err)
-	require.Len(t, rows, 1, "Should have header row only")
-
-	mockWizClient.AssertExpectations(t)
+			mockWizClient.AssertExpectations(t)
+		})
+	}
 }
 
 func TestClient_GetReportData_GetAccessTokenError(t *testing.T) {

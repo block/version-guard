@@ -153,7 +153,19 @@ func (c *Client) fetchAndCache(ctx context.Context, reportID string) ([][]string
 		return nil, errors.Wrapf(err, "failed to parse Wiz report CSV for report %s", reportID)
 	}
 
-	// Note: Empty reports (header only) are valid - the inventory source will filter them
+	if len(rows) == 0 {
+		return nil, errors.Errorf("Wiz report %s CSV has no header", reportID)
+	}
+
+	actualRows := len(rows) - 1
+	if actualRows != report.ExpectedRows {
+		return nil, errors.Errorf(
+			"Wiz report %s expected %d data rows, downloaded %d",
+			reportID,
+			report.ExpectedRows,
+			actualRows,
+		)
+	}
 
 	c.mu.Lock()
 	c.cache[reportID] = &cachedReport{
