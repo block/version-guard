@@ -60,6 +60,16 @@ var (
 		Help: "Latest Version Guard detection compliance ratio by resource type.",
 	}, []string{"resource_type"})
 
+	detectionUnknownResources = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "version_guard_detection_unknown_resources",
+		Help: "Latest Version Guard UNKNOWN resource counts by resource type and cause.",
+	}, []string{"resource_type", "cause"})
+
+	detectionLifecycleResources = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "version_guard_detection_lifecycle_resources",
+		Help: "Latest Version Guard detection resource counts by resource type and lifecycle data source.",
+	}, []string{"resource_type", "source"})
+
 	detectionRunTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "version_guard_detection_run_total",
 		Help: "Total Version Guard detection workflow results by resource type.",
@@ -117,6 +127,8 @@ func Register(registry *prometheus.Registry) error {
 		scanLastTriggerTimestamp,
 		detectionResources,
 		detectionComplianceRatio,
+		detectionUnknownResources,
+		detectionLifecycleResources,
 		detectionRunTotal,
 		detectionDuration,
 		detectionLastRunTimestamp,
@@ -172,6 +184,48 @@ func RecordDetectionSummary(resourceType types.ResourceType, summary *types.Scan
 		ratio = float64(summary.GreenCount) / float64(summary.TotalResources)
 	}
 	detectionComplianceRatio.WithLabelValues(resourceTypeLabel).Set(ratio)
+}
+
+// RecordDetectionBreakdown records bounded lifecycle attribution and first
+// clears every allowed series for the resource type to prevent stale values.
+func RecordDetectionBreakdown(
+	resourceType types.ResourceType,
+	unknownCounts map[types.LifecycleUnknownCause]int,
+	sourceCounts map[types.LifecycleDataSource]int,
+) {
+	resourceTypeLabel := normalizeLabel(string(resourceType), "unknown")
+	knownCauses := make(map[types.LifecycleUnknownCause]struct{})
+	for _, cause := range types.KnownLifecycleUnknownCauses() {
+		knownCauses[cause] = struct{}{}
+		detectionUnknownResources.WithLabelValues(resourceTypeLabel, string(cause)).Set(0)
+	}
+	knownSources := make(map[types.LifecycleDataSource]struct{})
+	for _, source := range types.KnownLifecycleDataSources() {
+		knownSources[source] = struct{}{}
+		detectionLifecycleResources.WithLabelValues(resourceTypeLabel, string(source)).Set(0)
+	}
+
+	normalizedCauses := make(map[types.LifecycleUnknownCause]int)
+	for cause, count := range unknownCounts {
+		if _, ok := knownCauses[cause]; !ok {
+			cause = types.LifecycleUnknownCauseUnattributed
+		}
+		normalizedCauses[cause] += count
+	}
+	for cause, count := range normalizedCauses {
+		detectionUnknownResources.WithLabelValues(resourceTypeLabel, string(cause)).Set(float64(count))
+	}
+
+	normalizedSources := make(map[types.LifecycleDataSource]int)
+	for source, count := range sourceCounts {
+		if _, ok := knownSources[source]; !ok {
+			source = types.LifecycleDataSourceUnknown
+		}
+		normalizedSources[source] += count
+	}
+	for source, count := range normalizedSources {
+		detectionLifecycleResources.WithLabelValues(resourceTypeLabel, string(source)).Set(float64(count))
+	}
 }
 
 // RecordDetectionRun records a detection child workflow result.
@@ -296,6 +350,8 @@ func ResetForTest() {
 	scanLastTriggerTimestamp.Reset()
 	detectionResources.Reset()
 	detectionComplianceRatio.Reset()
+	detectionUnknownResources.Reset()
+	detectionLifecycleResources.Reset()
 	detectionRunTotal.Reset()
 	detectionDuration.Reset()
 	detectionLastRunTimestamp.Reset()

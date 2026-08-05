@@ -181,6 +181,8 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 					Version:            "13",
 					Engine:             "aurora-postgresql",
 					Source:             "endoflife-date-api",
+					DataSource:         types.LifecycleDataSourceLocalOverride,
+					UnknownCause:       types.LifecycleUnknownCauseCycleNotFound,
 					IsSupported:        true,
 					IsDeprecated:       true,
 					IsExtendedSupport:  true,
@@ -235,5 +237,7 @@ func TestBuilder_CurrentSchemaBreakWireShape(t *testing.T) {
 	assert.Equal(t, "13", eol["version"])
 	assert.Equal(t, "aurora-postgresql", eol["engine"])
 	assert.Equal(t, "endoflife-date-api", eol["source"])
+	assert.Equal(t, "cycle_not_found", eol["unknown_cause"])
+	assert.Equal(t, "local_override", eol["data_source"])
 	assert.Equal(t, true, eol["is_extended_support"])
 }
