@@ -471,7 +471,7 @@ Before adapter conversion, reject nil cycles, blank cycle IDs, and invalid
 date-or-boolean strings for `support`, `eol`, `extendedSupport`, and `lts`:
 
 ```go
-func validateProductCycle(cycle *ProductCycle) error {
+func ValidateProductCycle(cycle *ProductCycle) error {
 	if cycle == nil {
 		return errors.New("cycle is nil")
 	}
@@ -492,7 +492,9 @@ func validateProductCycle(cycle *ProductCycle) error {
 }
 ```
 
-`validateDateOrBoolean` accepts nil, booleans, empty strings, `"true"`,
+`ValidateProductCycle` is exported so the override manifest validator can reuse
+the runtime contract without duplicating it. `validateDateOrBoolean` accepts
+nil, booleans, empty strings, `"true"`,
 `"false"`, and strict `YYYY-MM-DD`; it rejects all other types and strings.
 Record a rejected non-empty cycle ID instead of adding it to valid versions.
 
