@@ -46,6 +46,18 @@ func validateManifest(root string, now time.Time, warnings io.Writer) error {
 		warnings = io.Discard
 	}
 
+	apiDirectory := filepath.Join(root, "api")
+	apiInfo, err := os.Lstat(apiDirectory)
+	if err != nil {
+		return fmt.Errorf("stat API directory: %w", err)
+	}
+	if apiInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("API directory must not be a symlink")
+	}
+	if !apiInfo.IsDir() {
+		return fmt.Errorf("API directory is not a directory")
+	}
+
 	products := make(map[string]struct{}, len(m.Overrides))
 	paths := make(map[string]struct{}, len(m.Overrides))
 	for index := range m.Overrides {
@@ -55,7 +67,7 @@ func validateManifest(root string, now time.Time, warnings io.Writer) error {
 		}
 	}
 
-	apiFiles, err := filepath.Glob(filepath.Join(root, "api", "*.json"))
+	apiFiles, err := filepath.Glob(filepath.Join(apiDirectory, "*.json"))
 	if err != nil {
 		return fmt.Errorf("list API files: %w", err)
 	}

@@ -65,6 +65,13 @@ func TestValidateManifest(t *testing.T) {
 				t.Skipf("platform cannot create symlinks: %v", err)
 			}
 		}, wantErr: "must not be a symlink"},
+		{name: "symlink API directory", mutate: func(t *testing.T, root string) {
+			externalAPI := filepath.Join(t.TempDir(), "api")
+			require.NoError(t, os.Rename(filepath.Join(root, "api"), externalAPI))
+			if err := os.Symlink(externalAPI, filepath.Join(root, "api")); err != nil {
+				t.Skipf("platform cannot create symlinks: %v", err)
+			}
+		}, wantErr: "API directory must not be a symlink"},
 		{name: "trailing manifest JSON", mutate: func(t *testing.T, root string) {
 			path := filepath.Join(root, "manifest.json")
 			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
