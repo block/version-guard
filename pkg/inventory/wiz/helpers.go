@@ -139,20 +139,13 @@ func parseWizReport(
 		logger = slog.Default()
 	}
 	// Fetch report data
-	rows, err := client.GetReportData(ctx, reportID)
+	rows, err := client.GetReportData(ctx, reportID, requiredColumns...)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch Wiz report data")
 	}
 
 	// Build column index from header row
 	cols := buildColumnIndex(rows[0])
-
-	// Validate that all required columns are present (using alias-aware lookup)
-	for _, name := range requiredColumns {
-		if !cols.hasColumn(name) {
-			return nil, fmt.Errorf("required column %q not found in CSV header (have: %v)", name, rows[0])
-		}
-	}
 
 	if len(rows) == 1 {
 		return []*types.Resource{}, nil

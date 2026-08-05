@@ -157,13 +157,15 @@ func TestClient_GetReportData_DownloadError(t *testing.T) {
 
 func TestClient_GetReportData_Caching(t *testing.T) {
 	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
 
 	mockWizClient := new(MockWizClient)
 
 	// Mock should only be called ONCE due to caching
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil).Once()
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "cached-report-id").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
 
@@ -186,6 +188,33 @@ func TestClient_GetReportData_Caching(t *testing.T) {
 	mockWizClient.AssertExpectations(t)
 }
 
+func TestClient_GetReportData_RefetchesAfterReportFreshnessDeadline(t *testing.T) {
+	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
+
+	mockWizClient := new(MockWizClient)
+	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil).Times(2)
+	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "freshness-report-id").
+		Return(&report, nil).Times(2)
+	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
+		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
+	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
+		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
+
+	client := NewClient(mockWizClient, time.Hour)
+	_, err := client.GetReportData(ctx, "freshness-report-id")
+	require.NoError(t, err)
+
+	client.mu.Lock()
+	client.cache["freshness-report-id"].freshnessDeadline = time.Now().Add(-time.Second)
+	client.mu.Unlock()
+
+	_, err = client.GetReportData(ctx, "freshness-report-id")
+	require.NoError(t, err)
+	mockWizClient.AssertExpectations(t)
+}
+
 // TestClient_GetReportData_PerReportIDCache pins the contract that calls
 // for different reportIDs do NOT evict each other's cache entries. The
 // Version-Guard server fans out one detection workflow per resource type,
@@ -194,13 +223,15 @@ func TestClient_GetReportData_Caching(t *testing.T) {
 // parallel scans.
 func TestClient_GetReportData_PerReportIDCache(t *testing.T) {
 	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
 
 	mockWizClient := new(MockWizClient)
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "report-A").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "report-B").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	// Each download mock is configured Once() — the test fails if either
 	// is called twice (the symptom of cache eviction).
 	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
@@ -232,6 +263,8 @@ func TestClient_GetReportData_PerReportIDCache(t *testing.T) {
 // fetch via singleflight, while remaining correct under the race detector.
 func TestClient_GetReportData_SingleflightCollapsesConcurrent(t *testing.T) {
 	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
 
 	mockWizClient := new(MockWizClient)
 	// Mock body returns a fresh ReadCloser per call. .Once() on the
@@ -239,7 +272,7 @@ func TestClient_GetReportData_SingleflightCollapsesConcurrent(t *testing.T) {
 	// many concurrent callers.
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil).Once()
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "concurrent-report").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
 

@@ -749,14 +749,18 @@ func TestListResources_ReportIDNotInMap(t *testing.T) {
 func TestGenericInventorySource_SchemaDriftEmpty(t *testing.T) {
 	mockWizClient := new(MockWizClient)
 	report := &Report{
-		ID:           "test-report-id",
-		DownloadURL:  "https://wiz-api.example.com/reports/test-report-id/download",
-		ExpectedRows: 0,
+		ID:               "test-report-id",
+		DownloadURL:      "https://wiz-api.example.com/reports/test-report-id/download",
+		LastRun:          time.Now(),
+		RunIntervalHours: 24,
+		ExpectedRows:     0,
 	}
-	mockWizClient.On("GetAccessToken", mock.Anything).Return("test-token", nil)
-	mockWizClient.On("GetReport", mock.Anything, "test-token", "test-report-id").Return(report, nil)
+	mockWizClient.On("GetAccessToken", mock.Anything).Return("test-token", nil).Times(2)
+	mockWizClient.On("GetReport", mock.Anything, "test-token", "test-report-id").Return(report, nil).Times(2)
 	mockWizClient.On("DownloadReport", mock.Anything, report.DownloadURL).
-		Return(NewMockReadCloser("externalId,nativeType\n"), nil)
+		Return(NewMockReadCloser("externalId,nativeType\n"), nil).Once()
+	mockWizClient.On("DownloadReport", mock.Anything, report.DownloadURL).
+		Return(NewMockReadCloser("externalId,nativeType\n"), nil).Once()
 
 	t.Setenv("WIZ_REPORT_IDS", `{"test-resource":"test-report-id"}`)
 	cfg := config.ResourceConfig{
@@ -772,12 +776,15 @@ func TestGenericInventorySource_SchemaDriftEmpty(t *testing.T) {
 	}
 	source := NewGenericInventorySource(NewClient(mockWizClient, time.Hour), &cfg, nil, nil)
 
-	_, err := source.ListResources(context.Background(), types.ResourceType(cfg.Type))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `required column "versionDetails.version" not found`)
-	assert.Contains(t, err.Error(), "resource test-resource")
-	assert.Contains(t, err.Error(), "report test-report-id")
-	assert.NotContains(t, err.Error(), report.DownloadURL)
+	for range 2 {
+		_, err := source.ListResources(context.Background(), types.ResourceType(cfg.Type))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `required column "versionDetails.version" not found`)
+		assert.Contains(t, err.Error(), "resource test-resource")
+		assert.Contains(t, err.Error(), "report test-report-id")
+		assert.NotContains(t, err.Error(), report.DownloadURL)
+	}
+	mockWizClient.AssertNumberOfCalls(t, "DownloadReport", 2)
 }
 
 func TestGenericInventorySource_HealthyEmpty(t *testing.T) {

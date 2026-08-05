@@ -63,8 +63,9 @@ type Client struct {
 
 //nolint:govet // field alignment sacrificed for readability
 type cachedReport struct {
-	data      [][]string
-	fetchedAt time.Time
+	data              [][]string
+	fetchedAt         time.Time
+	freshnessDeadline time.Time
 }
 
 // NewClient creates a new Wiz client with caching
@@ -84,9 +85,12 @@ func NewClient(wizClient WizClient, cacheTTL time.Duration) *Client {
 // rows. Each reportID is cached independently for cacheTTL duration so
 // parallel scans across different resource types don't evict each
 // other's data.
-func (c *Client) GetReportData(ctx context.Context, reportID string) ([][]string, error) {
+func (c *Client) GetReportData(ctx context.Context, reportID string, requiredColumns ...string) ([][]string, error) {
 	// Fast path: read-locked cache lookup.
 	if rows, ok := c.lookup(reportID); ok {
+		if err := validateRequiredColumns(rows, requiredColumns); err != nil {
+			return nil, errors.Wrapf(err, "Wiz report %s has invalid CSV schema", reportID)
+		}
 		return rows, nil
 	}
 
@@ -100,7 +104,7 @@ func (c *Client) GetReportData(ctx context.Context, reportID string) ([][]string
 		if rows, ok := c.lookup(reportID); ok {
 			return rows, nil
 		}
-		return c.fetchAndCache(ctx, reportID)
+		return c.fetchAndCache(ctx, reportID, requiredColumns)
 	})
 	if err != nil {
 		return nil, err
@@ -108,6 +112,9 @@ func (c *Client) GetReportData(ctx context.Context, reportID string) ([][]string
 	rows, ok := result.([][]string)
 	if !ok {
 		return nil, errors.Errorf("wiz cache returned unexpected type for report %s", reportID)
+	}
+	if err := validateRequiredColumns(rows, requiredColumns); err != nil {
+		return nil, errors.Wrapf(err, "Wiz report %s has invalid CSV schema", reportID)
 	}
 	return rows, nil
 }
@@ -123,6 +130,9 @@ func (c *Client) lookup(reportID string) ([][]string, bool) {
 	if time.Since(cached.fetchedAt) >= c.cacheTTL {
 		return nil, false
 	}
+	if !cached.freshnessDeadline.IsZero() && !time.Now().Before(cached.freshnessDeadline) {
+		return nil, false
+	}
 	return cached.data, true
 }
 
@@ -130,7 +140,7 @@ func (c *Client) lookup(reportID string) ([][]string, bool) {
 // for one reportID and writes the parsed rows into the cache before
 // returning. Called from inside a singleflight slot, so at most one
 // goroutine per reportID is here at a time.
-func (c *Client) fetchAndCache(ctx context.Context, reportID string) ([][]string, error) {
+func (c *Client) fetchAndCache(ctx context.Context, reportID string, requiredColumns []string) ([][]string, error) {
 	accessToken, err := c.wizClient.GetAccessToken(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get Wiz access token")
@@ -167,14 +177,32 @@ func (c *Client) fetchAndCache(ctx context.Context, reportID string) ([][]string
 		)
 	}
 
+	// Required columns are caller-specific. Return invalid rows so every
+	// singleflight waiter can validate its own requirements, but do not cache
+	// data that is invalid for the initiating caller.
+	if err := validateRequiredColumns(rows, requiredColumns); err != nil {
+		return rows, nil
+	}
+
 	c.mu.Lock()
 	c.cache[reportID] = &cachedReport{
-		data:      rows,
-		fetchedAt: time.Now(),
+		data:              rows,
+		fetchedAt:         time.Now(),
+		freshnessDeadline: report.LastRun.Add(time.Duration(report.RunIntervalHours)*time.Hour + reportFreshnessGrace),
 	}
 	c.mu.Unlock()
 
 	return rows, nil
+}
+
+func validateRequiredColumns(rows [][]string, requiredColumns []string) error {
+	cols := buildColumnIndex(rows[0])
+	for _, name := range requiredColumns {
+		if !cols.hasColumn(name) {
+			return errors.Errorf("required column %q not found in CSV header (have: %v)", name, rows[0])
+		}
+	}
+	return nil
 }
 
 // ParseTags extracts tags from a Wiz Tags column (JSON format)
