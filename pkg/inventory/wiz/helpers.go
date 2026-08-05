@@ -144,11 +144,6 @@ func parseWizReport(
 		return nil, errors.Wrap(err, "failed to fetch Wiz report data")
 	}
 
-	if len(rows) < 2 {
-		// Empty report (only header row or completely empty)
-		return []*types.Resource{}, nil
-	}
-
 	// Build column index from header row
 	cols := buildColumnIndex(rows[0])
 
@@ -157,6 +152,10 @@ func parseWizReport(
 		if !cols.hasColumn(name) {
 			return nil, fmt.Errorf("required column %q not found in CSV header (have: %v)", name, rows[0])
 		}
+	}
+
+	if len(rows) == 1 {
+		return []*types.Resource{}, nil
 	}
 
 	totalDataRows := len(rows) - 1

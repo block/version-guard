@@ -434,6 +434,11 @@ The keys correspond to resource IDs in `pkg/config/defaults/resources.yaml`. Thi
 - ✅ Single environment variable to manage
 - ✅ Easy to add new resources (just add to JSON map)
 
+At scan time, Version Guard verifies each configured report's identity, completed
+run status, schedule-based freshness, expected row count, and required CSV
+columns. A header-only CSV is accepted only when Wiz reports zero results; stale,
+truncated, or schema-incompatible output fails that resource's inventory fetch.
+
 **Logging:**
 
 Version Guard uses structured JSON logging via Go's `log/slog` package for production observability:

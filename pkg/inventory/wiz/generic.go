@@ -94,7 +94,7 @@ func (s *GenericInventorySource) ListResources(ctx context.Context, resourceType
 	}
 
 	// Use shared helper to parse Wiz report
-	return parseWizReport(
+	resources, err := parseWizReport(
 		ctx,
 		s.client,
 		reportID,
@@ -103,6 +103,10 @@ func (s *GenericInventorySource) ListResources(ctx context.Context, resourceType
 		parseRow,
 		s.logger,
 	)
+	if err != nil {
+		return nil, errors.Wrapf(err, "Wiz dependency unhealthy for resource %s report %s", s.config.ID, reportID)
+	}
+	return resources, nil
 }
 
 // GetResource fetches a single resource by ID
