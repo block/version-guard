@@ -2,6 +2,48 @@ package types
 
 import "time"
 
+type LifecycleUnknownCause string
+
+const (
+	LifecycleUnknownCauseProductNotFound       LifecycleUnknownCause = "product_not_found"
+	LifecycleUnknownCauseCycleNotFound         LifecycleUnknownCause = "cycle_not_found"
+	LifecycleUnknownCauseSourceError           LifecycleUnknownCause = "source_error"
+	LifecycleUnknownCauseMalformedCycle        LifecycleUnknownCause = "malformed_cycle"
+	LifecycleUnknownCauseEmptyInventoryVersion LifecycleUnknownCause = "empty_inventory_version"
+	LifecycleUnknownCauseLifecycleMismatch     LifecycleUnknownCause = "lifecycle_mismatch"
+	LifecycleUnknownCauseIndeterminate         LifecycleUnknownCause = "indeterminate_lifecycle"
+	LifecycleUnknownCauseUnattributed          LifecycleUnknownCause = "unattributed"
+)
+
+type LifecycleDataSource string
+
+const (
+	LifecycleDataSourceEndOfLifeDate LifecycleDataSource = "endoflife_date"
+	LifecycleDataSourceLocalOverride LifecycleDataSource = "local_override"
+	LifecycleDataSourceUnknown       LifecycleDataSource = "unknown"
+)
+
+func KnownLifecycleUnknownCauses() []LifecycleUnknownCause {
+	return []LifecycleUnknownCause{
+		LifecycleUnknownCauseProductNotFound,
+		LifecycleUnknownCauseCycleNotFound,
+		LifecycleUnknownCauseSourceError,
+		LifecycleUnknownCauseMalformedCycle,
+		LifecycleUnknownCauseEmptyInventoryVersion,
+		LifecycleUnknownCauseLifecycleMismatch,
+		LifecycleUnknownCauseIndeterminate,
+		LifecycleUnknownCauseUnattributed,
+	}
+}
+
+func KnownLifecycleDataSources() []LifecycleDataSource {
+	return []LifecycleDataSource{
+		LifecycleDataSourceEndOfLifeDate,
+		LifecycleDataSourceLocalOverride,
+		LifecycleDataSourceUnknown,
+	}
+}
+
 // ResourceType represents the type of cloud resource. Production code
 // uses YAML-declared config IDs (e.g. "aurora-mysql", "eks") as
 // ResourceType values; the named constants below are retained only as
@@ -108,6 +150,10 @@ type VersionLifecycle struct {
 
 	// Source indicates where this lifecycle data came from (e.g., "aws-rds-api", "endoflife.date")
 	Source string
+
+	DataSource LifecycleDataSource
+
+	UnknownCause LifecycleUnknownCause
 
 	// IsEOL indicates if the version is past End-of-Life
 	IsEOL bool

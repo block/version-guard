@@ -4,8 +4,74 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/block/Version-Guard/pkg/types"
 )
+
+func TestUnknownCause(t *testing.T) {
+	tests := []struct {
+		name      string
+		resource  *types.Resource
+		lifecycle *types.VersionLifecycle
+		status    types.Status
+		want      types.LifecycleUnknownCause
+	}{
+		{
+			name:      "provider cause wins",
+			resource:  &types.Resource{CurrentVersion: "8.0.35"},
+			lifecycle: &types.VersionLifecycle{UnknownCause: types.LifecycleUnknownCauseProductNotFound},
+			status:    types.StatusUnknown,
+			want:      types.LifecycleUnknownCauseProductNotFound,
+		},
+		{
+			name:      "empty inventory version",
+			resource:  &types.Resource{CurrentVersion: " "},
+			lifecycle: &types.VersionLifecycle{},
+			status:    types.StatusUnknown,
+			want:      types.LifecycleUnknownCauseEmptyInventoryVersion,
+		},
+		{
+			name:      "cycle absent",
+			resource:  &types.Resource{CurrentVersion: "8.0.35"},
+			lifecycle: &types.VersionLifecycle{},
+			status:    types.StatusUnknown,
+			want:      types.LifecycleUnknownCauseCycleNotFound,
+		},
+		{
+			name:      "lifecycle mismatch",
+			resource:  &types.Resource{CurrentVersion: "8.0.35"},
+			lifecycle: &types.VersionLifecycle{Version: "5.7"},
+			status:    types.StatusUnknown,
+			want:      types.LifecycleUnknownCauseLifecycleMismatch,
+		},
+		{
+			name:      "indeterminate lifecycle",
+			resource:  &types.Resource{CurrentVersion: "8.0.35"},
+			lifecycle: &types.VersionLifecycle{Version: "8.0"},
+			status:    types.StatusUnknown,
+			want:      types.LifecycleUnknownCauseIndeterminate,
+		},
+		{
+			name:      "known status has no cause",
+			resource:  &types.Resource{CurrentVersion: "8.0.35"},
+			lifecycle: &types.VersionLifecycle{Version: "8.0", IsSupported: true},
+			status:    types.StatusGreen,
+		},
+		{
+			name:     "nil lifecycle",
+			resource: &types.Resource{CurrentVersion: "8.0.35"},
+			status:   types.StatusUnknown,
+			want:     types.LifecycleUnknownCauseUnattributed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, UnknownCause(tt.resource, tt.lifecycle, tt.status))
+		})
+	}
+}
 
 func TestDefaultPolicy_Classify_EOLVersion(t *testing.T) {
 	policy := NewDefaultPolicy()
