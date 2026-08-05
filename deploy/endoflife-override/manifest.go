@@ -134,13 +134,15 @@ func validateOverride(root string, override *manifestOverride, now time.Time, wa
 	if interval > maximumReviewInterval {
 		return fmt.Errorf("review interval exceeds 30 days")
 	}
-	if now.After(reviewDueOn) {
+	if !now.Before(reviewDueOn.AddDate(0, 0, 1)) {
 		fmt.Fprintf(warnings, "warning: review overdue for %s (due %s)\n", override.Product, override.ReviewDueOn)
 	}
 
 	cleanPath := filepath.ToSlash(filepath.Clean(override.Path))
-	if cleanPath != override.Path || !strings.HasPrefix(cleanPath, "api/") || strings.Contains(cleanPath, "../") {
-		return fmt.Errorf("path %q must stay under api/", override.Path)
+	filename := strings.TrimPrefix(cleanPath, "api/")
+	if cleanPath != override.Path || filename == cleanPath || filename == "" ||
+		strings.ContainsAny(filename, `/\`) || filepath.Ext(filename) != ".json" {
+		return fmt.Errorf("path %q must be a direct api/<filename>.json path", override.Path)
 	}
 	fullPath := filepath.Join(root, filepath.FromSlash(cleanPath))
 	info, err := os.Stat(fullPath)
