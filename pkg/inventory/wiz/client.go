@@ -34,10 +34,12 @@ type WizClient interface {
 
 //nolint:govet // field alignment sacrificed for readability
 type Report struct {
-	ID          string
-	Name        string
-	DownloadURL string
-	LastRun     time.Time
+	ID               string
+	Name             string
+	DownloadURL      string
+	LastRun          time.Time
+	RunIntervalHours int
+	ExpectedRows     int
 }
 
 // Client wraps the Wiz API client with caching and CSV parsing.

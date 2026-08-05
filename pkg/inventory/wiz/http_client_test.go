@@ -2,6 +2,8 @@ package wiz
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -101,21 +103,37 @@ func TestGetAccessToken_TransportError(t *testing.T) {
 // ---------------- GetReport ----------------
 
 func TestGetReport_HappyPath(t *testing.T) {
+	runAt := time.Now().UTC().Add(-time.Hour)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Auth header is forwarded.
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
+		var request graphQLRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		assert.Contains(t, request.Query, "runIntervalHours")
+		assert.Contains(t, request.Query, "runAt")
+		assert.Contains(t, request.Query, "ReportRunResultsGraphQuery")
+		assert.Contains(t, request.Query, "ReportRunResultsCloudResource")
+		assert.Contains(t, request.Query, "ReportRunResultsCloudResourceV2")
+		assert.Equal(t, 3, strings.Count(request.Query, "rowCount:"))
+
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
+		_, _ = fmt.Fprintf(w, `{
 			"data": {
 				"report": {
 					"id": "rep-1",
 					"name": "Aurora Inventory",
-					"lastRun": {"status": "COMPLETED", "url": "https://files.example/abc.csv"}
+					"runIntervalHours": 24,
+					"lastRun": {
+						"status": "COMPLETED",
+						"url": "https://files.example/abc.csv",
+						"runAt": %q,
+						"results": {"__typename": "ReportRunResultsCloudResourceV2", "rowCount": 12}
+					}
 				}
 			}
-		}`))
+		}`, runAt.Format(time.RFC3339Nano))
 	}))
 	defer srv.Close()
 
@@ -125,20 +143,57 @@ func TestGetReport_HappyPath(t *testing.T) {
 	assert.Equal(t, "rep-1", rep.ID)
 	assert.Equal(t, "Aurora Inventory", rep.Name)
 	assert.Equal(t, "https://files.example/abc.csv", rep.DownloadURL)
+	assert.Equal(t, runAt, rep.LastRun)
+	assert.Equal(t, 24, rep.RunIntervalHours)
+	assert.Equal(t, 12, rep.ExpectedRows)
 }
 
-func TestGetReport_LastRunNotCompleted(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{
-			"data": {"report": {"id":"r","name":"n","lastRun":{"status":"FAILED","url":""}}}
-		}`))
-	}))
-	defer srv.Close()
+func TestGetReport_InvalidMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	healthy := func(runAt time.Time) string {
+		return fmt.Sprintf(`{"data":{"report":{"id":"r","name":"Report","runIntervalHours":24,"lastRun":{"status":"COMPLETED","url":"https://files.example/report.csv","runAt":%q,"results":{"__typename":"ReportRunResultsCloudResourceV2","rowCount":12}}}}}`, runAt.Format(time.RFC3339Nano))
+	}
 
-	c := newTestHTTPClient("", srv.URL)
-	_, err := c.GetReport(context.Background(), "tok", "r")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "FAILED")
+	tests := []struct {
+		name       string
+		body       string
+		want       string
+		wantAbsent string
+	}{
+		{name: "null report", body: `{"data":{"report":null}}`, want: "report r not found"},
+		{name: "mismatched ID", body: strings.Replace(healthy(now), `"id":"r"`, `"id":"other"`, 1), want: "identity mismatch"},
+		{name: "blank name", body: strings.Replace(healthy(now), `"name":"Report"`, `"name":"  "`, 1), want: "has no name"},
+		{name: "null last run", body: strings.Replace(healthy(now), `"lastRun":{"status":"COMPLETED","url":"https://files.example/report.csv","runAt":`+fmt.Sprintf("%q", now.Format(time.RFC3339Nano))+`,"results":{"__typename":"ReportRunResultsCloudResourceV2","rowCount":12}}`, `"lastRun":null`, 1), want: "has no last run"},
+		{name: "non-completed status", body: strings.Replace(healthy(now), `"status":"COMPLETED"`, `"status":"FAILED"`, 1), want: "FAILED"},
+		{name: "blank URL", body: strings.Replace(healthy(now), `"url":"https://files.example/report.csv"`, `"url":"  "`, 1), want: "download URL", wantAbsent: "files.example"},
+		{name: "missing runAt", body: strings.Replace(healthy(now), `"runAt":`+fmt.Sprintf("%q,", now.Format(time.RFC3339Nano)), "", 1), want: "run time"},
+		{name: "invalid runAt", body: strings.Replace(healthy(now), fmt.Sprintf("%q", now.Format(time.RFC3339Nano)), `"not-a-time"`, 1), want: "failed to get report r"},
+		{name: "missing interval", body: strings.Replace(healthy(now), `"runIntervalHours":24,`, "", 1), want: "run interval"},
+		{name: "zero interval", body: strings.Replace(healthy(now), `"runIntervalHours":24`, `"runIntervalHours":0`, 1), want: "run interval"},
+		{name: "negative interval", body: strings.Replace(healthy(now), `"runIntervalHours":24`, `"runIntervalHours":-1`, 1), want: "run interval"},
+		{name: "missing results", body: strings.Replace(healthy(now), `,"results":{"__typename":"ReportRunResultsCloudResourceV2","rowCount":12}`, "", 1), want: "run results"},
+		{name: "unsupported result type", body: strings.Replace(healthy(now), "ReportRunResultsCloudResourceV2", "OtherResults", 1), want: "unsupported result type"},
+		{name: "missing row count", body: strings.Replace(healthy(now), `,"rowCount":12`, "", 1), want: "row count"},
+		{name: "negative row count", body: strings.Replace(healthy(now), `"rowCount":12`, `"rowCount":-1`, 1), want: "row count"},
+		{name: "stale run", body: healthy(now.Add(-30 * time.Hour)), want: "stale"},
+		{name: "future run", body: healthy(now.Add(5*time.Minute + time.Second)), want: "future"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			_, err := newTestHTTPClient("", srv.URL).GetReport(context.Background(), "tok", "r")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+			if tt.wantAbsent != "" {
+				assert.NotContains(t, err.Error(), tt.wantAbsent)
+			}
+		})
+	}
 }
 
 func TestGetReport_GraphQLErrorArray(t *testing.T) {
@@ -173,15 +228,16 @@ func TestDoGraphQL_RateLimitRetriesThenSucceeds(t *testing.T) {
 	// the rate-limit substring detection AND that a per-attempt success
 	// breaks out of the loop.
 	calls := 0
+	runAt := time.Now().UTC().Add(-time.Hour)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		if calls == 1 {
 			http.Error(w, "Rate limit exceeded — slow down", http.StatusTooManyRequests)
 			return
 		}
-		_, _ = w.Write([]byte(`{
-			"data":{"report":{"id":"r","name":"n","lastRun":{"status":"COMPLETED","url":"u"}}}
-		}`))
+		_, _ = fmt.Fprintf(w, `{
+			"data":{"report":{"id":"r","name":"n","runIntervalHours":24,"lastRun":{"status":"COMPLETED","url":"u","runAt":%q,"results":{"__typename":"ReportRunResultsGraphQuery","rowCount":1}}}}
+		}`, runAt.Format(time.RFC3339Nano))
 	}))
 	defer srv.Close()
 
