@@ -222,11 +222,20 @@ func (a *Activities) FetchEOLData(ctx context.Context, input FetchEOLInput) (*EO
 			logger.Warn("Failed to get lifecycle", "engine", resource.Engine, "version", resource.CurrentVersion, "error", err)
 			if lifecycle == nil {
 				lifecycle = &types.VersionLifecycle{
+					Version:      resource.CurrentVersion,
 					Engine:       resource.Engine,
 					Source:       provider.Name(),
 					DataSource:   types.LifecycleDataSourceUnknown,
 					UnknownCause: types.LifecycleUnknownCauseSourceError,
 				}
+			}
+		} else if lifecycle == nil {
+			lifecycle = &types.VersionLifecycle{
+				Version:      resource.CurrentVersion,
+				Engine:       resource.Engine,
+				Source:       provider.Name(),
+				DataSource:   types.LifecycleDataSourceUnknown,
+				UnknownCause: types.LifecycleUnknownCauseUnattributed,
 			}
 		}
 
@@ -255,12 +264,14 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 	for _, resource := range resources {
 		key := resource.Engine + ":" + resource.CurrentVersion
 		lifecycle, ok := input.VersionLifecycles[key]
-		if !ok {
+		if !ok || lifecycle == nil {
 			// No lifecycle data - create unknown finding
 			lifecycle = &types.VersionLifecycle{
-				Version:     resource.CurrentVersion,
-				Engine:      resource.Engine,
-				IsSupported: false,
+				Version:      resource.CurrentVersion,
+				Engine:       resource.Engine,
+				IsSupported:  false,
+				DataSource:   types.LifecycleDataSourceUnknown,
+				UnknownCause: types.LifecycleUnknownCauseUnattributed,
 			}
 		}
 

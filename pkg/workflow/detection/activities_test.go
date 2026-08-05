@@ -288,6 +288,32 @@ func TestFetchEOLData_PreservesDiagnosticLifecycleOnError(t *testing.T) {
 	assert.Equal(t, diagnostic, output.VersionLifecycles["aurora-mysql:8.0.35"])
 }
 
+func TestFetchEOLData_NilLifecycleWithoutErrorIsUnattributed(t *testing.T) {
+	provider := &countingEOLProvider{}
+	act := NewActivities(nil, map[types.ResourceType]eol.Provider{
+		types.ResourceTypeAurora: provider,
+	}, policy.NewDefaultPolicy(), memory.NewStore())
+	env := newActivityEnv()
+	env.RegisterActivity(act.FetchEOLData)
+
+	result, err := env.ExecuteActivity(act.FetchEOLData, FetchEOLInput{
+		ResourceType: types.ResourceTypeAurora,
+		Resources: []*types.Resource{{
+			Engine: "aurora-mysql", CurrentVersion: "8.0.35", Type: types.ResourceTypeAurora,
+		}},
+	})
+	require.NoError(t, err)
+
+	var output EOLResult
+	require.NoError(t, result.Get(&output))
+	lifecycle := output.VersionLifecycles["aurora-mysql:8.0.35"]
+	require.NotNil(t, lifecycle)
+	assert.Equal(t, "aurora-mysql", lifecycle.Engine)
+	assert.Equal(t, "8.0.35", lifecycle.Version)
+	assert.Equal(t, types.LifecycleDataSourceUnknown, lifecycle.DataSource)
+	assert.Equal(t, types.LifecycleUnknownCauseUnattributed, lifecycle.UnknownCause)
+}
+
 // --- DetectDrift tests ---
 
 func TestDetectDrift_FromCache_CleansUpAndStoresFindings(t *testing.T) {
@@ -512,6 +538,29 @@ func TestDetectDrift_UnknownVersion(t *testing.T) {
 	var detect DetectResult
 	require.NoError(t, result.Get(&detect))
 	assert.Equal(t, 1, detect.FindingsCount)
+}
+
+func TestDetectDrift_NilLifecycleMapValueIsUnattributed(t *testing.T) {
+	resource := &types.Resource{
+		ID: "r1", Engine: "aurora-mysql", CurrentVersion: "8.0.35", Type: types.ResourceTypeAurora,
+	}
+	act := newTestActivities([]*types.Resource{resource}, nil)
+	env := newActivityEnv()
+	env.RegisterActivity(act.DetectDrift)
+
+	result, err := env.ExecuteActivity(act.DetectDrift, DetectInput{
+		Resources: []*types.Resource{resource},
+		VersionLifecycles: map[string]*types.VersionLifecycle{
+			"aurora-mysql:8.0.35": nil,
+		},
+	})
+	require.NoError(t, err)
+
+	var output DetectResult
+	require.NoError(t, result.Get(&output))
+	require.Len(t, output.Findings, 1)
+	assert.Equal(t, types.StatusUnknown, output.Findings[0].Status)
+	assert.Equal(t, types.LifecycleUnknownCauseUnattributed, output.Findings[0].EOL.UnknownCause)
 }
 
 // --- StoreFindings tests ---

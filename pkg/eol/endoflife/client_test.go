@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/block/Version-Guard/pkg/types"
 )
 
@@ -200,6 +203,33 @@ func TestRealHTTPClient_ProductCyclesResultSource(t *testing.T) {
 			if result.FetchedAt.IsZero() {
 				t.Error("FetchedAt should be non-zero")
 			}
+		})
+	}
+}
+
+func TestRealHTTPClient_RejectsMalformedWholeResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "null cycles", body: `null`},
+		{name: "trailing JSON value", body: `[] {}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set(EOLSourceHeader, string(types.LifecycleDataSourceLocalOverride))
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := NewRealHTTPClientWithConfig(nil, server.URL)
+			result, err := client.GetProductCycles(context.Background(), "test")
+
+			require.Error(t, err)
+			assert.Equal(t, types.LifecycleDataSourceLocalOverride, result.DataSource)
+			assert.False(t, result.FetchedAt.IsZero())
 		})
 	}
 }

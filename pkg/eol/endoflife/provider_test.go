@@ -3,6 +3,8 @@ package endoflife
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -323,6 +325,28 @@ func TestProvider_SourceErrorReturnsDiagnosticLifecycle(t *testing.T) {
 		t.Fatalf("lifecycle = %#v, want source_error diagnostic", lifecycle)
 	}
 	if lifecycle.DataSource != types.LifecycleDataSourceLocalOverride || !lifecycle.FetchedAt.Equal(fetchedAt) {
+		t.Errorf("diagnostic metadata not preserved: %#v", lifecycle)
+	}
+}
+
+func TestProvider_MalformedResponseReturnsSourceError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(EOLSourceHeader, string(types.LifecycleDataSourceLocalOverride))
+		_, _ = w.Write([]byte(`null`))
+	}))
+	defer server.Close()
+
+	client := NewRealHTTPClientWithConfig(server.Client(), server.URL)
+	provider, _ := NewProvider(client, "mysql", "", time.Hour, nil)
+	lifecycle, err := provider.GetVersionLifecycle(context.Background(), "mysql", "8.0")
+
+	if err == nil {
+		t.Fatal("expected malformed response error")
+	}
+	if lifecycle == nil || lifecycle.UnknownCause != types.LifecycleUnknownCauseSourceError {
+		t.Fatalf("lifecycle = %#v, want source_error diagnostic", lifecycle)
+	}
+	if lifecycle.DataSource != types.LifecycleDataSourceLocalOverride || lifecycle.FetchedAt.IsZero() {
 		t.Errorf("diagnostic metadata not preserved: %#v", lifecycle)
 	}
 }

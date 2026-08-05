@@ -148,8 +148,19 @@ func (c *RealHTTPClient) GetProductCycles(ctx context.Context, product string) (
 		return result, errors.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result.Cycles); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&result.Cycles); err != nil {
 		return result, errors.Wrap(err, "failed to decode response")
+	}
+	if result.Cycles == nil {
+		return result, errors.New("failed to decode response: cycles must be a JSON array")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return result, errors.New("failed to decode response: unexpected trailing JSON value")
+		}
+		return result, errors.Wrap(err, "failed to decode response trailer")
 	}
 
 	return result, nil
