@@ -21,9 +21,16 @@ func TestValidateManifest(t *testing.T) {
 	}{
 		{name: "valid manifest"},
 		{name: "unsupported schema version", mutate: mutateManifest(func(m *manifest) { m.SchemaVersion = 2 }), wantErr: "schema_version must be 1"},
-		{name: "missing required field", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Owner = "" }), wantErr: "owner is required"},
+		{name: "missing product", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Product = "" }), wantErr: "product is required"},
+		{name: "missing path", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Path = "" }), wantErr: "path is required"},
+		{name: "missing reason", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Reason = "" }), wantErr: "reason is required"},
+		{name: "missing owner", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Owner = "" }), wantErr: "owner is required"},
+		{name: "missing source URL", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].SourceURL = "" }), wantErr: "source_url is required"},
+		{name: "missing reviewed date", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewedOn = "" }), wantErr: "reviewed_on is required"},
+		{name: "missing review due date", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = "" }), wantErr: "review_due_on is required"},
 		{name: "duplicate product", mutate: mutateManifest(func(m *manifest) { m.Overrides = append(m.Overrides, m.Overrides[0]) }), wantErr: "duplicate product"},
 		{name: "duplicate path", mutate: mutateManifest(func(m *manifest) { m.Overrides[1].Path = m.Overrides[0].Path }), wantErr: "duplicate path"},
+		{name: "product does not match API filename", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Product = "different-product" }), wantErr: "must match product"},
 		{name: "missing API file entry", mutate: func(t *testing.T, root string) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "api", "unlisted.json"), []byte("[]"), 0o600))
 		}, wantErr: "has no manifest entry"},
@@ -47,6 +54,17 @@ func TestValidateManifest(t *testing.T) {
 			require.NoError(t, os.Rename(filepath.Join(root, "api", "amazon-aurora-mysql.json"), nonJSON))
 			mutateManifest(func(m *manifest) { m.Overrides[0].Path = "api/amazon-aurora-mysql.txt" })(t, root)
 		}, wantErr: "direct api/"},
+		{name: "symlink API path", mutate: func(t *testing.T, root string) {
+			target := filepath.Join(t.TempDir(), "outside.json")
+			data, err := os.ReadFile(filepath.Join(root, "api", "amazon-aurora-mysql.json"))
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(target, data, 0o600))
+			link := filepath.Join(root, "api", "amazon-aurora-mysql.json")
+			require.NoError(t, os.Remove(link))
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("platform cannot create symlinks: %v", err)
+			}
+		}, wantErr: "must not be a symlink"},
 		{name: "trailing manifest JSON", mutate: func(t *testing.T, root string) {
 			path := filepath.Join(root, "manifest.json")
 			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
@@ -61,6 +79,13 @@ func TestValidateManifest(t *testing.T) {
 		{name: "API data is not an array", mutate: func(t *testing.T, root string) {
 			require.NoError(t, os.WriteFile(filepath.Join(root, "api", "amazon-aurora-mysql.json"), []byte(`null`), 0o600))
 		}, wantErr: "top-level array"},
+		{name: "API data has trailing JSON value", mutate: func(t *testing.T, root string) {
+			path := filepath.Join(root, "api", "amazon-aurora-mysql.json")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			data = append(data, []byte("\n{}")...)
+			require.NoError(t, os.WriteFile(path, data, 0o600))
+		}, wantErr: "multiple JSON values"},
 		{name: "overdue review warns", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = "2026-08-06" }), wantWarning: "review overdue"},
 	}
 

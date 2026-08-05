@@ -144,13 +144,19 @@ func validateOverride(root string, override *manifestOverride, now time.Time, wa
 		strings.ContainsAny(filename, `/\`) || filepath.Ext(filename) != ".json" {
 		return fmt.Errorf("path %q must be a direct api/<filename>.json path", override.Path)
 	}
+	if strings.TrimSuffix(filename, ".json") != override.Product {
+		return fmt.Errorf("path filename must match product %q", override.Product)
+	}
 	fullPath := filepath.Join(root, filepath.FromSlash(cleanPath))
-	info, err := os.Stat(fullPath)
+	info, err := os.Lstat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("path %q does not exist", override.Path)
 		}
 		return fmt.Errorf("stat path %q: %w", override.Path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("path %q must not be a symlink", override.Path)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("path %q is not a regular file", override.Path)
