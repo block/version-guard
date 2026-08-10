@@ -746,6 +746,78 @@ func TestListResources_ReportIDNotInMap(t *testing.T) {
 	assert.Contains(t, err.Error(), "no report ID configured for resource aurora-postgresql")
 }
 
+func TestGenericInventorySource_SchemaDriftEmpty(t *testing.T) {
+	mockWizClient := new(MockWizClient)
+	report := &Report{
+		ID:               "test-report-id",
+		DownloadURL:      "https://wiz-api.example.com/reports/test-report-id/download",
+		LastRun:          time.Now(),
+		RunIntervalHours: 24,
+		ExpectedRows:     0,
+	}
+	mockWizClient.On("GetAccessToken", mock.Anything).Return("test-token", nil).Times(2)
+	mockWizClient.On("GetReport", mock.Anything, "test-token", "test-report-id").Return(report, nil).Times(2)
+	mockWizClient.On("DownloadReport", mock.Anything, report.DownloadURL).
+		Return(NewMockReadCloser("externalId,nativeType\n"), nil).Once()
+	mockWizClient.On("DownloadReport", mock.Anything, report.DownloadURL).
+		Return(NewMockReadCloser("externalId,nativeType\n"), nil).Once()
+
+	t.Setenv("WIZ_REPORT_IDS", `{"test-resource":"test-report-id"}`)
+	cfg := config.ResourceConfig{
+		ID:   "test-resource",
+		Type: "aurora",
+		Inventory: config.InventoryConfig{
+			NativeTypePattern: "rds/AmazonAuroraPostgreSQL/cluster",
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+				"version":     "versionDetails.version",
+			},
+		},
+	}
+	source := NewGenericInventorySource(NewClient(mockWizClient, time.Hour), &cfg, nil, nil)
+
+	for range 2 {
+		_, err := source.ListResources(context.Background(), types.ResourceType(cfg.Type))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `required column "versionDetails.version" not found`)
+		assert.Contains(t, err.Error(), "resource test-resource")
+		assert.Contains(t, err.Error(), "report test-report-id")
+		assert.NotContains(t, err.Error(), report.DownloadURL)
+	}
+	mockWizClient.AssertNumberOfCalls(t, "DownloadReport", 2)
+}
+
+func TestGenericInventorySource_HealthyEmpty(t *testing.T) {
+	mockWizClient := new(MockWizClient)
+	report := &Report{
+		ID:           "test-report-id",
+		DownloadURL:  "https://wiz-api.example.com/reports/test-report-id/download",
+		ExpectedRows: 0,
+	}
+	mockWizClient.On("GetAccessToken", mock.Anything).Return("test-token", nil)
+	mockWizClient.On("GetReport", mock.Anything, "test-token", "test-report-id").Return(report, nil)
+	mockWizClient.On("DownloadReport", mock.Anything, report.DownloadURL).
+		Return(NewMockReadCloser("externalId,nativeType,versionDetails.version\n"), nil)
+
+	t.Setenv("WIZ_REPORT_IDS", `{"test-resource":"test-report-id"}`)
+	cfg := config.ResourceConfig{
+		ID:   "test-resource",
+		Type: "aurora",
+		Inventory: config.InventoryConfig{
+			NativeTypePattern: "rds/AmazonAuroraPostgreSQL/cluster",
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+				"version":     "versionDetails.version",
+			},
+		},
+	}
+	source := NewGenericInventorySource(NewClient(mockWizClient, time.Hour), &cfg, nil, nil)
+
+	resources, err := source.ListResources(context.Background(), types.ResourceType(cfg.Type))
+	require.NoError(t, err)
+	assert.Empty(t, resources)
+}
+
 func TestGetResource(t *testing.T) {
 	// Note: This test would require mocking the Wiz client
 	// For now, we test the error case when ListResources fails
@@ -800,6 +872,76 @@ func auroraTransforms() config.TransformsConfig {
 				{Contains: []string{"aurora", "postgres"}, Result: "aurora-postgresql"},
 			},
 		},
+	}
+}
+
+func TestParseResourceRow_OpenSearchRegion(t *testing.T) {
+	cfg := config.ResourceConfig{
+		ID:            "opensearch",
+		Type:          "opensearch",
+		CloudProvider: "aws",
+		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+				"version":     "versionDetails.version",
+			},
+			FieldMappings: map[string]string{
+				"region": "region",
+			},
+		},
+	}
+
+	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
+	cols := buildColumnIndex([]string{
+		"externalId",
+		"versionDetails.version",
+		"regionLocation",
+	})
+	tests := []struct {
+		name       string
+		resourceID string
+		region     string
+		want       string
+	}{
+		{
+			name:       "country location falls back to ARN region",
+			resourceID: "arn:aws:es:us-west-2:123456789012:domain/customer-search",
+			region:     "US",
+			want:       "us-west-2",
+		},
+		{
+			name:       "AWS region remains unchanged",
+			resourceID: "arn:aws:es:us-west-2:123456789012:domain/customer-search",
+			region:     "eu-west-1",
+			want:       "eu-west-1",
+		},
+		{
+			name:       "country location remains when resource ID is not an OpenSearch ARN",
+			resourceID: "customer-search",
+			region:     "US",
+			want:       "US",
+		},
+		{
+			name:       "country location remains when ARN is not an OpenSearch domain",
+			resourceID: "arn:aws:es:us-west-2:123456789012:package/example",
+			region:     "US",
+			want:       "US",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := []string{
+				tt.resourceID,
+				"OpenSearch_2.11",
+				tt.region,
+			}
+
+			resource, err := source.parseResourceRow(context.Background(), cols, row)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resource.Extra["region"])
+		})
 	}
 }
 
