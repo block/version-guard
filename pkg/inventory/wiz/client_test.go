@@ -57,24 +57,42 @@ func TestClient_GetReportData_Success(t *testing.T) {
 	mockWizClient.AssertExpectations(t)
 }
 
-func TestClient_GetReportData_EmptyReport(t *testing.T) {
-	ctx := context.Background()
+func TestClient_GetReportData_CSVCompleteness(t *testing.T) {
+	tests := []struct {
+		csv          string
+		name         string
+		wantErr      string
+		expectedRows int
+		wantRows     int
+	}{
+		{name: "valid zero result", expectedRows: 0, csv: WizAPIFixtures.EmptyCSVData, wantRows: 1},
+		{name: "missing header", expectedRows: 0, csv: "", wantErr: "has no header"},
+		{name: "broken header only", expectedRows: 5, csv: WizAPIFixtures.EmptyCSVData, wantErr: "expected 5 data rows, downloaded 0"},
+		{name: "truncated data", expectedRows: 2, csv: "id,name\n1,one\n", wantErr: "expected 2 data rows, downloaded 1"},
+	}
 
-	mockWizClient := new(MockWizClient)
-	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)
-	mockWizClient.On("GetReport", mock.Anything, mock.Anything, mock.Anything).Return(WizAPIFixtures.AuroraReport, nil)
-	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).Return(NewMockReadCloser(WizAPIFixtures.EmptyCSVData), nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := *WizAPIFixtures.AuroraReport
+			report.ExpectedRows = tt.expectedRows
 
-	client := NewClient(mockWizClient, time.Hour)
+			mockWizClient := new(MockWizClient)
+			mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)
+			mockWizClient.On("GetReport", mock.Anything, mock.Anything, mock.Anything).Return(&report, nil)
+			mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).Return(NewMockReadCloser(tt.csv), nil)
 
-	// Execute: Get empty report (only has header row)
-	rows, err := client.GetReportData(ctx, "empty-report-id")
+			rows, err := NewClient(mockWizClient, time.Hour).GetReportData(context.Background(), "report-id")
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				require.Nil(t, rows)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, rows, tt.wantRows)
+			}
 
-	// Verify: Returns header row only (this is valid CSV, not an error)
-	require.NoError(t, err)
-	require.Len(t, rows, 1, "Should have header row only")
-
-	mockWizClient.AssertExpectations(t)
+			mockWizClient.AssertExpectations(t)
+		})
+	}
 }
 
 func TestClient_GetReportData_GetAccessTokenError(t *testing.T) {
@@ -139,13 +157,15 @@ func TestClient_GetReportData_DownloadError(t *testing.T) {
 
 func TestClient_GetReportData_Caching(t *testing.T) {
 	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
 
 	mockWizClient := new(MockWizClient)
 
 	// Mock should only be called ONCE due to caching
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil).Once()
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "cached-report-id").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
 
@@ -168,6 +188,33 @@ func TestClient_GetReportData_Caching(t *testing.T) {
 	mockWizClient.AssertExpectations(t)
 }
 
+func TestClient_GetReportData_RefetchesAfterReportFreshnessDeadline(t *testing.T) {
+	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
+
+	mockWizClient := new(MockWizClient)
+	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil).Times(2)
+	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "freshness-report-id").
+		Return(&report, nil).Times(2)
+	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
+		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
+	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
+		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
+
+	client := NewClient(mockWizClient, time.Hour)
+	_, err := client.GetReportData(ctx, "freshness-report-id")
+	require.NoError(t, err)
+
+	client.mu.Lock()
+	client.cache["freshness-report-id"].freshnessDeadline = time.Now().Add(-time.Second)
+	client.mu.Unlock()
+
+	_, err = client.GetReportData(ctx, "freshness-report-id")
+	require.NoError(t, err)
+	mockWizClient.AssertExpectations(t)
+}
+
 // TestClient_GetReportData_PerReportIDCache pins the contract that calls
 // for different reportIDs do NOT evict each other's cache entries. The
 // Version-Guard server fans out one detection workflow per resource type,
@@ -176,13 +223,15 @@ func TestClient_GetReportData_Caching(t *testing.T) {
 // parallel scans.
 func TestClient_GetReportData_PerReportIDCache(t *testing.T) {
 	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
 
 	mockWizClient := new(MockWizClient)
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil)
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "report-A").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "report-B").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	// Each download mock is configured Once() — the test fails if either
 	// is called twice (the symptom of cache eviction).
 	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
@@ -214,6 +263,8 @@ func TestClient_GetReportData_PerReportIDCache(t *testing.T) {
 // fetch via singleflight, while remaining correct under the race detector.
 func TestClient_GetReportData_SingleflightCollapsesConcurrent(t *testing.T) {
 	ctx := context.Background()
+	report := *WizAPIFixtures.AuroraReport
+	report.LastRun = time.Now()
 
 	mockWizClient := new(MockWizClient)
 	// Mock body returns a fresh ReadCloser per call. .Once() on the
@@ -221,7 +272,7 @@ func TestClient_GetReportData_SingleflightCollapsesConcurrent(t *testing.T) {
 	// many concurrent callers.
 	mockWizClient.On("GetAccessToken", mock.Anything).Return(WizAPIFixtures.AccessToken, nil).Once()
 	mockWizClient.On("GetReport", mock.Anything, mock.Anything, "concurrent-report").
-		Return(WizAPIFixtures.AuroraReport, nil).Once()
+		Return(&report, nil).Once()
 	mockWizClient.On("DownloadReport", mock.Anything, mock.Anything).
 		Return(NewMockReadCloser(WizAPIFixtures.AuroraCSVData), nil).Once()
 

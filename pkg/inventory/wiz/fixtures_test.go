@@ -21,10 +21,12 @@ var WizAPIFixtures = struct {
 	AccessToken: "wiz-mock-access-token-12345",
 
 	AuroraReport: &Report{
-		ID:          "aurora-report-id-123",
-		Name:        "Aurora Clusters Report",
-		DownloadURL: "https://wiz-api.example.com/reports/aurora-report-id-123/download",
-		LastRun:     time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC),
+		ID:               "aurora-report-id-123",
+		Name:             "Aurora Clusters Report",
+		DownloadURL:      "https://wiz-api.example.com/reports/aurora-report-id-123/download",
+		LastRun:          time.Date(2026, 4, 7, 10, 0, 0, 0, time.UTC),
+		RunIntervalHours: 24,
+		ExpectedRows:     5,
 	},
 
 	// Realistic Wiz CSV export for Aurora clusters
@@ -38,10 +40,12 @@ arn:aws:rds:eu-west-1:345678901234:cluster:postgres-11-deprecated,postgres-11-de
 `,
 
 	ElastiCacheReport: &Report{
-		ID:          "elasticache-report-id-456",
-		Name:        "ElastiCache Version Report",
-		DownloadURL: "https://wiz-api.example.com/reports/elasticache-report-id-456/download",
-		LastRun:     time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC),
+		ID:               "elasticache-report-id-456",
+		Name:             "ElastiCache Version Report",
+		DownloadURL:      "https://wiz-api.example.com/reports/elasticache-report-id-456/download",
+		LastRun:          time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC),
+		RunIntervalHours: 24,
+		ExpectedRows:     5,
 	},
 
 	// Realistic Wiz CSV export for ElastiCache clusters
@@ -55,10 +59,12 @@ arn:aws:elasticache:eu-west-1:345678901234:cluster:user-valkey-001,user-valkey-0
 `,
 
 	LambdaReport: &Report{
-		ID:          "lambda-report-id-789",
-		Name:        "Lambda Functions Report",
-		DownloadURL: "https://wiz-api.example.com/reports/lambda-report-id-789/download",
-		LastRun:     time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC),
+		ID:               "lambda-report-id-789",
+		Name:             "Lambda Functions Report",
+		DownloadURL:      "https://wiz-api.example.com/reports/lambda-report-id-789/download",
+		LastRun:          time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC),
+		RunIntervalHours: 24,
+		ExpectedRows:     5,
 	},
 
 	// Realistic Wiz CSV export for Lambda functions
