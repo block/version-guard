@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/pkg/errors"
 
 	"github.com/block/Version-Guard/pkg/config"
@@ -138,6 +140,8 @@ var wellKnownFieldMappingKeys = map[string]struct{}{
 	"engine":      {},
 	"tags":        {},
 }
+
+var awsRegionPattern = regexp.MustCompile(`^[a-z]{2}(?:-[a-z0-9]+)+-\d+$`)
 
 // column returns the CSV column declared in the YAML for the given
 // mapping key, or "" when the key is not declared. Required and
@@ -336,7 +340,11 @@ func (s *GenericInventorySource) parseResourceRow(
 		if extra == nil {
 			extra = make(map[string]string)
 		}
-		extra[key] = cols.col(row, col)
+		value := cols.col(row, col)
+		if s.config.ID == "opensearch" && key == "region" {
+			value = normalizeOpenSearchRegion(resourceID, value)
+		}
+		extra[key] = value
 	}
 
 	// Service derivation: prefer the configured app tag; if none is
@@ -367,6 +375,20 @@ func (s *GenericInventorySource) parseResourceRow(
 	}
 
 	return resource, nil
+}
+
+func normalizeOpenSearchRegion(resourceID, region string) string {
+	if awsRegionPattern.MatchString(region) {
+		return region
+	}
+
+	resourceARN, err := arn.Parse(resourceID)
+	if err != nil || resourceARN.Service != "es" || !strings.HasPrefix(resourceARN.Resource, "domain/") ||
+		!awsRegionPattern.MatchString(resourceARN.Region) {
+		return region
+	}
+
+	return resourceARN.Region
 }
 
 // getReportIDFromMap reads the WIZ_REPORT_IDS JSON map and returns the report ID for the given resource

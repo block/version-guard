@@ -875,6 +875,76 @@ func auroraTransforms() config.TransformsConfig {
 	}
 }
 
+func TestParseResourceRow_OpenSearchRegion(t *testing.T) {
+	cfg := config.ResourceConfig{
+		ID:            "opensearch",
+		Type:          "opensearch",
+		CloudProvider: "aws",
+		Inventory: config.InventoryConfig{
+			RequiredMappings: map[string]string{
+				"resource_id": "externalId",
+				"version":     "versionDetails.version",
+			},
+			FieldMappings: map[string]string{
+				"region": "region",
+			},
+		},
+	}
+
+	source := NewGenericInventorySource(&Client{}, &cfg, nil, nil)
+	cols := buildColumnIndex([]string{
+		"externalId",
+		"versionDetails.version",
+		"regionLocation",
+	})
+	tests := []struct {
+		name       string
+		resourceID string
+		region     string
+		want       string
+	}{
+		{
+			name:       "country location falls back to ARN region",
+			resourceID: "arn:aws:es:us-west-2:123456789012:domain/customer-search",
+			region:     "US",
+			want:       "us-west-2",
+		},
+		{
+			name:       "AWS region remains unchanged",
+			resourceID: "arn:aws:es:us-west-2:123456789012:domain/customer-search",
+			region:     "eu-west-1",
+			want:       "eu-west-1",
+		},
+		{
+			name:       "country location remains when resource ID is not an OpenSearch ARN",
+			resourceID: "customer-search",
+			region:     "US",
+			want:       "US",
+		},
+		{
+			name:       "country location remains when ARN is not an OpenSearch domain",
+			resourceID: "arn:aws:es:us-west-2:123456789012:package/example",
+			region:     "US",
+			want:       "US",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			row := []string{
+				tt.resourceID,
+				"OpenSearch_2.11",
+				tt.region,
+			}
+
+			resource, err := source.parseResourceRow(context.Background(), cols, row)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resource.Extra["region"])
+		})
+	}
+}
+
 func TestParseResourceRow_Lambda(t *testing.T) {
 	cfg := config.ResourceConfig{
 		ID:            "lambda",
