@@ -30,6 +30,77 @@ func TestResourceType_String(t *testing.T) {
 	}
 }
 
+func TestLifecycleDetailsFromVersionLifecycle_PropagatesAttribution(t *testing.T) {
+	lifecycle := &VersionLifecycle{
+		Source:       "endoflife-date-api",
+		DataSource:   LifecycleDataSourceLocalOverride,
+		UnknownCause: LifecycleUnknownCauseCycleNotFound,
+	}
+
+	details := LifecycleDetailsFromVersionLifecycle(lifecycle)
+
+	assert.Equal(t, "endoflife-date-api", details.Source)
+	assert.Equal(t, LifecycleDataSourceLocalOverride, details.DataSource)
+	assert.Equal(t, LifecycleUnknownCauseCycleNotFound, details.UnknownCause)
+}
+
+func TestKnownLifecycleValues(t *testing.T) {
+	tests := []struct {
+		name string
+		got  []string
+		want []string
+	}{
+		{
+			name: "unknown causes",
+			got: func() []string {
+				values := KnownLifecycleUnknownCauses()
+				result := make([]string, len(values))
+				for i, value := range values {
+					result[i] = string(value)
+				}
+				return result
+			}(),
+			want: []string{
+				"product_not_found",
+				"cycle_not_found",
+				"source_error",
+				"malformed_cycle",
+				"empty_inventory_version",
+				"lifecycle_mismatch",
+				"indeterminate_lifecycle",
+				"unattributed",
+			},
+		},
+		{
+			name: "data sources",
+			got: func() []string {
+				values := KnownLifecycleDataSources()
+				result := make([]string, len(values))
+				for i, value := range values {
+					result[i] = string(value)
+				}
+				return result
+			}(),
+			want: []string{"endoflife_date", "local_override", "unknown"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.got)
+			assert.Len(t, tt.got, len(mapValues(tt.got)))
+		})
+	}
+}
+
+func mapValues(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
+}
+
 // TestStatBucket_JSONShape locks the StatBucket wire keys. Every
 // per-grouping bucket (ByResourceType / ByService / ByCloudProvider)
 // rolls up through this struct, so changing any key here ripples to

@@ -64,6 +64,32 @@ func (p *DefaultPolicy) Classify(resource *types.Resource, lifecycle *types.Vers
 	return types.StatusUnknown
 }
 
+func UnknownCause(
+	resource *types.Resource,
+	lifecycle *types.VersionLifecycle,
+	status types.Status,
+) types.LifecycleUnknownCause {
+	if status != types.StatusUnknown {
+		return ""
+	}
+	if lifecycle != nil && lifecycle.UnknownCause != "" {
+		return lifecycle.UnknownCause
+	}
+	if resource == nil || lifecycle == nil {
+		return types.LifecycleUnknownCauseUnattributed
+	}
+	if strings.TrimSpace(resource.CurrentVersion) == "" {
+		return types.LifecycleUnknownCauseEmptyInventoryVersion
+	}
+	if strings.TrimSpace(lifecycle.Version) == "" {
+		return types.LifecycleUnknownCauseCycleNotFound
+	}
+	if !versionMatches(lifecycle.Version, resource.CurrentVersion) {
+		return types.LifecycleUnknownCauseLifecycleMismatch
+	}
+	return types.LifecycleUnknownCauseIndeterminate
+}
+
 // isRedStatus checks if the lifecycle indicates a RED status
 func (p *DefaultPolicy) isRedStatus(lifecycle *types.VersionLifecycle) bool {
 	// Past End-of-Life

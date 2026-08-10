@@ -29,18 +29,25 @@ curl -s https://deploy-preview-9534--endoflife-date.netlify.app/api/amazon-auror
   | python3 -m json.tool > api/amazon-aurora-mysql.json
 ```
 
-2. Restart docker-compose — no rebuild needed:
+2. Add or update the corresponding entry in `manifest.json`. The source URL,
+owner, reason, review date, and review due date are required. Reviews may be
+scheduled at most 30 days apart.
+
+3. Run the override package tests, then restart docker-compose — no rebuild needed:
 
 ```bash
+go test ./deploy/endoflife-override
 docker compose restart endoflife
 ```
 
-## Current Overrides
+The validator checks the manifest schema and metadata, one-to-one coverage of
+manifest entries and `api/*.json` files, and lifecycle data using the same
+validation as the runtime provider. Malformed metadata, missing files, invalid
+URLs, and invalid lifecycle data fail validation. An expired review due date is
+warn-only so CI continues to run while making the overdue review visible.
 
-| File | Reason | Upstream PR |
-|------|--------|-------------|
-| `amazon-aurora-mysql.json` | Product not yet on endoflife.date | [#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) |
-| `amazon-opensearch.json` | Missing cycles 3.3 and 3.5 | [#9919](https://github.com/endoflife-date/endoflife.date/pull/9919) |
+`manifest.json` is the machine-readable source of truth for current overrides.
+Update it whenever an override is added, reviewed, or removed.
 
 ## Configuration
 
@@ -57,3 +64,7 @@ When `EOL_BASE_URL` is not set, Version Guard connects directly to `https://endo
 ## Removing Overrides
 
 Once an upstream PR is merged, delete the local JSON file. Nginx will then proxy that product to the upstream API automatically.
+
+Delete its `manifest.json` entry in the same change. Nginx marks local and
+upstream responses with authoritative `X-Version-Guard-EOL-Source` headers;
+those values flow into snapshot findings and lifecycle source metrics.

@@ -3,6 +3,7 @@ package detection
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"go.temporal.io/sdk/activity"
@@ -207,12 +208,35 @@ func (a *Activities) FetchEOLData(ctx context.Context, input FetchEOLInput) (*EO
 			continue
 		}
 		seen[key] = true
+		if strings.TrimSpace(resource.CurrentVersion) == "" {
+			lifecycles[key] = &types.VersionLifecycle{
+				Engine:       resource.Engine,
+				DataSource:   types.LifecycleDataSourceUnknown,
+				UnknownCause: types.LifecycleUnknownCauseEmptyInventoryVersion,
+			}
+			continue
+		}
 
 		lifecycle, err := provider.GetVersionLifecycle(ctx, resource.Engine, resource.CurrentVersion)
 		if err != nil {
 			logger.Warn("Failed to get lifecycle", "engine", resource.Engine, "version", resource.CurrentVersion, "error", err)
-			// Continue with other versions
-			continue
+			if lifecycle == nil {
+				lifecycle = &types.VersionLifecycle{
+					Version:      resource.CurrentVersion,
+					Engine:       resource.Engine,
+					Source:       provider.Name(),
+					DataSource:   types.LifecycleDataSourceUnknown,
+					UnknownCause: types.LifecycleUnknownCauseSourceError,
+				}
+			}
+		} else if lifecycle == nil {
+			lifecycle = &types.VersionLifecycle{
+				Version:      resource.CurrentVersion,
+				Engine:       resource.Engine,
+				Source:       provider.Name(),
+				DataSource:   types.LifecycleDataSourceUnknown,
+				UnknownCause: types.LifecycleUnknownCauseUnattributed,
+			}
 		}
 
 		lifecycles[key] = lifecycle
@@ -240,19 +264,24 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 	for _, resource := range resources {
 		key := resource.Engine + ":" + resource.CurrentVersion
 		lifecycle, ok := input.VersionLifecycles[key]
-		if !ok {
+		if !ok || lifecycle == nil {
 			// No lifecycle data - create unknown finding
 			lifecycle = &types.VersionLifecycle{
-				Version:     resource.CurrentVersion,
-				Engine:      resource.Engine,
-				IsSupported: false,
+				Version:      resource.CurrentVersion,
+				Engine:       resource.Engine,
+				IsSupported:  false,
+				DataSource:   types.LifecycleDataSourceUnknown,
+				UnknownCause: types.LifecycleUnknownCauseUnattributed,
 			}
 		}
 
-		// Classify using policy
-		status := a.Policy.Classify(resource, lifecycle)
-		message := a.Policy.GetMessage(resource, lifecycle, status)
-		lifecycleDetails := types.LifecycleDetailsFromVersionLifecycle(lifecycle)
+		// Classify and annotate a copy so provider and cache-owned lifecycle
+		// pointers remain raw and reusable by other resources.
+		annotated := *lifecycle
+		status := a.Policy.Classify(resource, &annotated)
+		annotated.UnknownCause = policy.UnknownCause(resource, &annotated, status)
+		message := a.Policy.GetMessage(resource, &annotated, status)
+		lifecycleDetails := types.LifecycleDetailsFromVersionLifecycle(&annotated)
 
 		// Create finding. Name, account, and region (when configured) are
 		// part of resource.Extra and propagate through verbatim.
@@ -265,7 +294,7 @@ func (a *Activities) DetectDrift(ctx context.Context, input DetectInput) (*Detec
 			Engine:           resource.Engine,
 			Status:           status,
 			Message:          message,
-			EOLDate:          lifecycle.EOLDate,
+			EOLDate:          annotated.EOLDate,
 			Tags:             resource.Tags,
 			Extra:            resource.Extra,
 			EOL:              lifecycleDetails,
@@ -339,8 +368,11 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 	summary := &types.ScanSummary{
 		TotalResources: len(findings),
 	}
+	unknownCounts := make(map[types.LifecycleUnknownCause]int)
+	sourceCounts := make(map[types.LifecycleDataSource]int)
 
 	for _, f := range findings {
+		sourceCounts[f.EOL.DataSource]++
 		switch f.Status {
 		case types.StatusRed:
 			summary.RedCount++
@@ -350,6 +382,7 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 			summary.GreenCount++
 		case types.StatusUnknown:
 			summary.UnknownCount++
+			unknownCounts[f.EOL.UnknownCause]++
 		}
 	}
 
@@ -365,6 +398,7 @@ func (a *Activities) EmitMetrics(ctx context.Context, input MetricsInput) (*Metr
 		"compliance", summary.CompliancePercentage)
 
 	telemetry.RecordDetectionSummary(input.ResourceType, summary)
+	telemetry.RecordDetectionBreakdown(input.ResourceType, unknownCounts, sourceCounts)
 
 	if input.FindingsBatchID != "" {
 		a.resourceCache.Delete(input.FindingsBatchID)

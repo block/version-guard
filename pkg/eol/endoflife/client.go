@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
+
+	"github.com/block/Version-Guard/pkg/types"
 )
 
 const (
@@ -17,6 +20,9 @@ const (
 
 	// DefaultTimeout for HTTP requests
 	DefaultTimeout = 10 * time.Second
+
+	// EOLSourceHeader identifies the trusted lifecycle source selected by a proxy.
+	EOLSourceHeader = "X-Version-Guard-EOL-Source"
 )
 
 // ErrProductNotFound is returned by GetProductCycles when the upstream
@@ -33,13 +39,20 @@ var ErrProductNotFound = errors.New("endoflife.date product not found")
 // This allows us to mock the HTTP client for testing
 type Client interface {
 	// GetProductCycles retrieves all lifecycle cycles for a product
-	GetProductCycles(ctx context.Context, product string) ([]*ProductCycle, error)
+	GetProductCycles(ctx context.Context, product string) (ProductCyclesResult, error)
+}
+
+// ProductCyclesResult contains lifecycle cycles and metadata about their source.
+//
+//nolint:govet // Field order groups the response payload before its attribution metadata.
+type ProductCyclesResult struct {
+	Cycles     []*ProductCycle
+	FetchedAt  time.Time
+	DataSource types.LifecycleDataSource
 }
 
 // ProductCycle represents a single version/cycle from endoflife.date API
 // API docs: https://endoflife.date/docs/api/
-//
-//nolint:govet // field order matches endoflife.date API response shape for readability
 type ProductCycle struct {
 	Cycle             string `json:"cycle"`             // Version identifier (e.g., "1.31")
 	ReleaseDate       string `json:"releaseDate"`       // Release date (YYYY-MM-DD)
@@ -53,8 +66,9 @@ type ProductCycle struct {
 
 // RealHTTPClient is the production implementation of Client using net/http
 type RealHTTPClient struct {
-	httpClient *http.Client
-	baseURL    string
+	httpClient        *http.Client
+	baseURL           string
+	defaultDataSource types.LifecycleDataSource
 }
 
 // NewRealHTTPClient creates a new real HTTP client for endoflife.date API
@@ -63,31 +77,53 @@ func NewRealHTTPClient() *RealHTTPClient {
 		httpClient: &http.Client{
 			Timeout: DefaultTimeout,
 		},
-		baseURL: BaseURL,
+		baseURL:           BaseURL,
+		defaultDataSource: types.LifecycleDataSourceEndOfLifeDate,
 	}
 }
 
 // NewRealHTTPClientWithConfig creates a new client with custom configuration
 func NewRealHTTPClientWithConfig(httpClient *http.Client, baseURL string) *RealHTTPClient {
+	defaultDataSource := types.LifecycleDataSourceUnknown
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: DefaultTimeout}
 	}
 	if baseURL == "" {
 		baseURL = BaseURL
+		defaultDataSource = types.LifecycleDataSourceEndOfLifeDate
 	}
 	return &RealHTTPClient{
-		httpClient: httpClient,
-		baseURL:    baseURL,
+		httpClient:        httpClient,
+		baseURL:           baseURL,
+		defaultDataSource: defaultDataSource,
+	}
+}
+
+func lifecycleDataSource(value string, fallback types.LifecycleDataSource) types.LifecycleDataSource {
+	normalized := types.LifecycleDataSource(strings.ToLower(strings.TrimSpace(value)))
+	switch normalized {
+	case "":
+		return fallback
+	case types.LifecycleDataSourceEndOfLifeDate:
+		return types.LifecycleDataSourceEndOfLifeDate
+	case types.LifecycleDataSourceLocalOverride:
+		return types.LifecycleDataSourceLocalOverride
+	default:
+		return types.LifecycleDataSourceUnknown
 	}
 }
 
 // GetProductCycles retrieves all lifecycle cycles for a product from endoflife.date API
-func (c *RealHTTPClient) GetProductCycles(ctx context.Context, product string) ([]*ProductCycle, error) {
+func (c *RealHTTPClient) GetProductCycles(ctx context.Context, product string) (ProductCyclesResult, error) {
+	result := ProductCyclesResult{
+		FetchedAt:  time.Now(),
+		DataSource: c.defaultDataSource,
+	}
 	url := fmt.Sprintf("%s/%s.json", c.baseURL, product)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create request")
+		return result, errors.Wrap(err, "failed to create request")
 	}
 
 	// Set user agent for attribution
@@ -95,9 +131,10 @@ func (c *RealHTTPClient) GetProductCycles(ctx context.Context, product string) (
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to fetch data from %s", url)
+		return result, errors.Wrapf(err, "failed to fetch data from %s", url)
 	}
 	defer resp.Body.Close()
+	result.DataSource = lifecycleDataSource(resp.Header.Get(EOLSourceHeader), result.DataSource)
 
 	if resp.StatusCode != http.StatusOK {
 		// 404 is a meaningful signal: the product slug doesn't exist on
@@ -105,19 +142,29 @@ func (c *RealHTTPClient) GetProductCycles(ctx context.Context, product string) (
 		// errors.Is(err, ErrProductNotFound) without sniffing the
 		// message text.
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, errors.Wrapf(ErrProductNotFound, "product %q", product)
+			return result, errors.Wrapf(ErrProductNotFound, "product %q", product)
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, errors.Errorf("unexpected status code %d (failed to read response body)", resp.StatusCode)
+			return result, errors.Errorf("unexpected status code %d (failed to read response body)", resp.StatusCode)
 		}
-		return nil, errors.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
+		return result, errors.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
 	}
 
-	var cycles []*ProductCycle
-	if err := json.NewDecoder(resp.Body).Decode(&cycles); err != nil {
-		return nil, errors.Wrap(err, "failed to decode response")
+	decoder := json.NewDecoder(resp.Body)
+	if err := decoder.Decode(&result.Cycles); err != nil {
+		return result, errors.Wrap(err, "failed to decode response")
+	}
+	if result.Cycles == nil {
+		return result, errors.New("failed to decode response: cycles must be a JSON array")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return result, errors.New("failed to decode response: unexpected trailing JSON value")
+		}
+		return result, errors.Wrap(err, "failed to decode response trailer")
 	}
 
-	return cycles, nil
+	return result, nil
 }

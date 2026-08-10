@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "overrides": [
+    {
+      "product": "amazon-aurora-mysql",
+      "path": "api/amazon-aurora-mysql.json",
+      "reason": "Product pending upstream inclusion",
+      "owner": "@block/block-platform",
+      "source_url": "https://github.com/endoflife-date/endoflife.date/pull/9534",
+      "reviewed_on": "2026-08-05",
+      "review_due_on": "2026-09-04"
+    },
+    {
+      "product": "amazon-opensearch",
+      "path": "api/amazon-opensearch.json",
+      "reason": "Required cycles are missing upstream",
+      "owner": "@block/block-platform",
+      "source_url": "https://github.com/endoflife-date/endoflife.date/pull/9919",
+      "reviewed_on": "2026-08-05",
+      "review_due_on": "2026-09-04"
+    }
+  ]
+}

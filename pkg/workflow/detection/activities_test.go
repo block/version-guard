@@ -2,6 +2,7 @@ package detection
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -18,6 +19,24 @@ import (
 	"github.com/block/Version-Guard/pkg/store/memory"
 	"github.com/block/Version-Guard/pkg/types"
 )
+
+type countingEOLProvider struct {
+	lifecycle *types.VersionLifecycle
+	err       error
+	calls     int
+}
+
+func (p *countingEOLProvider) GetVersionLifecycle(context.Context, string, string) (*types.VersionLifecycle, error) {
+	p.calls++
+	return p.lifecycle, p.err
+}
+
+func (p *countingEOLProvider) ListAllVersions(context.Context, string) ([]*types.VersionLifecycle, error) {
+	return nil, nil
+}
+
+func (p *countingEOLProvider) Name() string      { return "counting-provider" }
+func (p *countingEOLProvider) Engines() []string { return nil }
 
 // newTestActivities creates an Activities instance with mock dependencies.
 func newTestActivities(resources []*types.Resource, eolVersions map[string]*types.VersionLifecycle) *Activities {
@@ -218,6 +237,102 @@ func TestFetchEOLData_DeduplicatesVersions(t *testing.T) {
 	assert.Len(t, eol.VersionLifecycles, 1)
 }
 
+func TestFetchEOLData_EmptyVersionDoesNotCallProvider(t *testing.T) {
+	provider := &countingEOLProvider{}
+	act := NewActivities(nil, map[types.ResourceType]eol.Provider{
+		types.ResourceTypeAurora: provider,
+	}, policy.NewDefaultPolicy(), memory.NewStore())
+	env := newActivityEnv()
+	env.RegisterActivity(act.FetchEOLData)
+
+	result, err := env.ExecuteActivity(act.FetchEOLData, FetchEOLInput{
+		ResourceType: types.ResourceTypeAurora,
+		Resources: []*types.Resource{{
+			Engine: "aurora-mysql", CurrentVersion: "  ", Type: types.ResourceTypeAurora,
+		}},
+	})
+	require.NoError(t, err)
+
+	var output EOLResult
+	require.NoError(t, result.Get(&output))
+	require.Equal(t, 0, provider.calls)
+	lifecycle := output.VersionLifecycles["aurora-mysql:  "]
+	require.NotNil(t, lifecycle)
+	assert.Equal(t, types.LifecycleUnknownCauseEmptyInventoryVersion, lifecycle.UnknownCause)
+	assert.Equal(t, types.LifecycleDataSourceUnknown, lifecycle.DataSource)
+}
+
+func TestFetchEOLData_PreservesDiagnosticLifecycleOnError(t *testing.T) {
+	diagnostic := &types.VersionLifecycle{
+		Version: "8.0.35", Engine: "aurora-mysql", Source: "endoflife-date-api",
+		DataSource:   types.LifecycleDataSourceEndOfLifeDate,
+		UnknownCause: types.LifecycleUnknownCauseSourceError,
+	}
+	provider := &countingEOLProvider{lifecycle: diagnostic, err: errors.New("upstream unavailable")}
+	act := NewActivities(nil, map[types.ResourceType]eol.Provider{
+		types.ResourceTypeAurora: provider,
+	}, policy.NewDefaultPolicy(), memory.NewStore())
+	env := newActivityEnv()
+	env.RegisterActivity(act.FetchEOLData)
+
+	result, err := env.ExecuteActivity(act.FetchEOLData, FetchEOLInput{
+		ResourceType: types.ResourceTypeAurora,
+		Resources: []*types.Resource{{
+			Engine: "aurora-mysql", CurrentVersion: "8.0.35", Type: types.ResourceTypeAurora,
+		}},
+	})
+	require.NoError(t, err)
+
+	var output EOLResult
+	require.NoError(t, result.Get(&output))
+	assert.Equal(t, diagnostic, output.VersionLifecycles["aurora-mysql:8.0.35"])
+
+	detectEnv := newActivityEnv()
+	detectEnv.RegisterActivity(act.DetectDrift)
+	detectResult, err := detectEnv.ExecuteActivity(act.DetectDrift, DetectInput{
+		Resources: resourcesForDiagnosticVersion(), VersionLifecycles: output.VersionLifecycles,
+	})
+	require.NoError(t, err)
+	var detected DetectResult
+	require.NoError(t, detectResult.Get(&detected))
+	require.Len(t, detected.Findings, 1)
+	assert.Equal(t, "8.0.35", detected.Findings[0].EOL.Version)
+	assert.Equal(t, "aurora-mysql", detected.Findings[0].EOL.Engine)
+}
+
+func resourcesForDiagnosticVersion() []*types.Resource {
+	return []*types.Resource{{
+		ID: "diagnostic", Type: types.ResourceTypeAurora,
+		Engine: "aurora-mysql", CurrentVersion: "8.0.35",
+	}}
+}
+
+func TestFetchEOLData_NilLifecycleWithoutErrorIsUnattributed(t *testing.T) {
+	provider := &countingEOLProvider{}
+	act := NewActivities(nil, map[types.ResourceType]eol.Provider{
+		types.ResourceTypeAurora: provider,
+	}, policy.NewDefaultPolicy(), memory.NewStore())
+	env := newActivityEnv()
+	env.RegisterActivity(act.FetchEOLData)
+
+	result, err := env.ExecuteActivity(act.FetchEOLData, FetchEOLInput{
+		ResourceType: types.ResourceTypeAurora,
+		Resources: []*types.Resource{{
+			Engine: "aurora-mysql", CurrentVersion: "8.0.35", Type: types.ResourceTypeAurora,
+		}},
+	})
+	require.NoError(t, err)
+
+	var output EOLResult
+	require.NoError(t, result.Get(&output))
+	lifecycle := output.VersionLifecycles["aurora-mysql:8.0.35"]
+	require.NotNil(t, lifecycle)
+	assert.Equal(t, "aurora-mysql", lifecycle.Engine)
+	assert.Equal(t, "8.0.35", lifecycle.Version)
+	assert.Equal(t, types.LifecycleDataSourceUnknown, lifecycle.DataSource)
+	assert.Equal(t, types.LifecycleUnknownCauseUnattributed, lifecycle.UnknownCause)
+}
+
 // --- DetectDrift tests ---
 
 func TestDetectDrift_FromCache_CleansUpAndStoresFindings(t *testing.T) {
@@ -354,6 +469,8 @@ func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
 			Version:            "5.7",
 			Engine:             "mysql",
 			Source:             "endoflife-date-api",
+			DataSource:         types.LifecycleDataSourceLocalOverride,
+			UnknownCause:       types.LifecycleUnknownCauseCycleNotFound,
 			DeprecationDate:    &standardSupportEnd,
 			ExtendedSupportEnd: &extendedSupportEnd,
 			EOLDate:            &extendedSupportEnd,
@@ -382,6 +499,8 @@ func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
 	assert.Equal(t, "5.7", details.Version)
 	assert.Equal(t, "mysql", details.Engine)
 	assert.Equal(t, "endoflife-date-api", details.Source)
+	assert.Equal(t, types.LifecycleDataSourceLocalOverride, details.DataSource)
+	assert.Empty(t, details.UnknownCause, "known statuses clear unknown attribution")
 	require.NotNil(t, details.StandardSupportEnd)
 	require.NotNil(t, details.ExtendedSupportEnd)
 	require.NotNil(t, details.EOLDate)
@@ -394,6 +513,31 @@ func TestDetectDrift_PropagatesLifecycleDetails(t *testing.T) {
 	assert.Equal(t, standardSupportEnd, *details.ActionableDate)
 	assert.Equal(t, fetchedAt, details.FetchedAt)
 	assert.True(t, details.IsExtendedSupport)
+}
+
+func TestDetectDrift_AnnotatesLifecycleCopy(t *testing.T) {
+	resource := &types.Resource{
+		ID: "r1", Engine: "aurora-mysql", CurrentVersion: "8.0.35", Type: types.ResourceTypeAurora,
+	}
+	lifecycle := &types.VersionLifecycle{
+		Version: "5.7", Engine: "aurora-mysql", DataSource: types.LifecycleDataSourceEndOfLifeDate,
+	}
+	act := newTestActivities([]*types.Resource{resource}, nil)
+	env := newActivityEnv()
+	env.RegisterActivity(act.DetectDrift)
+
+	result, err := env.ExecuteActivity(act.DetectDrift, DetectInput{
+		Resources:         []*types.Resource{resource},
+		VersionLifecycles: map[string]*types.VersionLifecycle{"aurora-mysql:8.0.35": lifecycle},
+	})
+	require.NoError(t, err)
+
+	var output DetectResult
+	require.NoError(t, result.Get(&output))
+	require.Len(t, output.Findings, 1)
+	assert.Equal(t, types.LifecycleUnknownCauseLifecycleMismatch, output.Findings[0].EOL.UnknownCause)
+	assert.Equal(t, types.LifecycleDataSourceEndOfLifeDate, output.Findings[0].EOL.DataSource)
+	assert.Empty(t, lifecycle.UnknownCause, "provider lifecycle must not be mutated")
 }
 
 func TestDetectDrift_UnknownVersion(t *testing.T) {
@@ -413,6 +557,29 @@ func TestDetectDrift_UnknownVersion(t *testing.T) {
 	var detect DetectResult
 	require.NoError(t, result.Get(&detect))
 	assert.Equal(t, 1, detect.FindingsCount)
+}
+
+func TestDetectDrift_NilLifecycleMapValueIsUnattributed(t *testing.T) {
+	resource := &types.Resource{
+		ID: "r1", Engine: "aurora-mysql", CurrentVersion: "8.0.35", Type: types.ResourceTypeAurora,
+	}
+	act := newTestActivities([]*types.Resource{resource}, nil)
+	env := newActivityEnv()
+	env.RegisterActivity(act.DetectDrift)
+
+	result, err := env.ExecuteActivity(act.DetectDrift, DetectInput{
+		Resources: []*types.Resource{resource},
+		VersionLifecycles: map[string]*types.VersionLifecycle{
+			"aurora-mysql:8.0.35": nil,
+		},
+	})
+	require.NoError(t, err)
+
+	var output DetectResult
+	require.NoError(t, result.Get(&output))
+	require.Len(t, output.Findings, 1)
+	assert.Equal(t, types.StatusUnknown, output.Findings[0].Status)
+	assert.Equal(t, types.LifecycleUnknownCauseUnattributed, output.Findings[0].EOL.UnknownCause)
 }
 
 // --- StoreFindings tests ---

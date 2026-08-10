@@ -364,6 +364,28 @@ Useful SDK metrics include:
 - `temporal_request_failure_total`
 - `temporal_request_latency_seconds`
 
+Version Guard also exposes lifecycle diagnostic gauges:
+
+- `version_guard_detection_unknown_resources{resource_type,cause}` — latest
+  UNKNOWN resources by resource type and bounded cause. Causes are
+  `product_not_found`, `cycle_not_found`, `source_error`, `malformed_cycle`,
+  `empty_inventory_version`, `lifecycle_mismatch`,
+  `indeterminate_lifecycle`, and `unattributed`.
+- `version_guard_detection_lifecycle_resources{resource_type,source}` — latest
+  resources by resource type and lifecycle source. Sources are
+  `endoflife_date`, `local_override`, and `unknown`.
+
+Engine and version are intentionally not Prometheus labels. For a specific
+resource, inspect its snapshot `eol.unknown_cause`, `eol.data_source`,
+`eol.engine`, and `eol.version` fields instead. Direct requests to the default
+endoflife.date API resolve to `endoflife_date`; nginx-served local files resolve
+to `local_override`; custom endpoints without a recognized
+`X-Version-Guard-EOL-Source` header resolve to `unknown`.
+
+Operators adding, reviewing, or removing local overrides must update
+[`deploy/endoflife-override/manifest.json`](./deploy/endoflife-override/manifest.json)
+and follow its [validation policy](./deploy/endoflife-override/README.md).
+
 Set `TEMPORAL_METRICS_ENABLED=false` to disable the handler, or
 `TEMPORAL_METRICS_LISTEN_ADDRESS=0.0.0.0:9091` to change the listen address.
 
@@ -780,7 +802,11 @@ A: Next scan will detect the new version and auto-resolve the finding.
 A: No, Version Guard only detects and reports. You must upgrade manually.
 
 **Q: What if my resource version isn't in the EOL database?**
-A: Finding will show status UNKNOWN. You can extend the EOL provider to add version data.
+A: The finding will show UNKNOWN with a bounded `eol.unknown_cause`. UNKNOWN
+also covers source errors, malformed lifecycle data, empty inventory versions,
+lifecycle mismatches, and indeterminate lifecycle records—not only missing
+versions. Inspect `eol.data_source`, `eol.engine`, and `eol.version` in the
+snapshot to choose the remediation.
 
 **Q: How do I add a new resource type?**
 A: See [Runbook 1](#runbook-1-onboarding-new-resource-type) above.
