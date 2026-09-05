@@ -5,10 +5,7 @@
 **Production-Tested Resources** (config-driven, zero code changes needed; all
 ten ship in `pkg/config/defaults/resources.yaml` and run live at Block):
 
-- ✅ **Aurora MySQL** — production tested via the
-  [`deploy/endoflife-override`](./deploy/endoflife-override/) shim while
-  [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534)
-  is still open upstream
+- ✅ **Aurora MySQL**
 - ✅ **Aurora PostgreSQL**
 - ✅ **EKS** — policy classification working (standard / extended support split)
 - ✅ **ElastiCache (Redis / Valkey / Memcached)**

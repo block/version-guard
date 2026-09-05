@@ -107,7 +107,7 @@ Version Guard uses a **config-driven approach** - resources are defined in `pkg/
 |----------|-----------|------------|--------|
 | **EKS** (Kubernetes) | Wiz | [amazon-eks](https://endoflife.date/amazon-eks) | ✅ Production tested |
 | **ElastiCache** (Redis/Valkey/Memcached) | Wiz | [amazon-elasticache-redis](https://endoflife.date/amazon-elasticache-redis), [valkey](https://endoflife.date/valkey) | ✅ Production tested |
-| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ⚠️ Production tested via the [`deploy/endoflife-override`](./deploy/endoflife-override/) shim while [endoflife.date#9534](https://github.com/endoflife-date/endoflife.date/pull/9534) is still open upstream |
+| **Aurora MySQL** | Wiz | [amazon-aurora-mysql](https://endoflife.date/amazon-aurora-mysql) | ✅ Production tested |
 | **Aurora PostgreSQL** | Wiz | [amazon-aurora-postgresql](https://endoflife.date/amazon-aurora-postgresql) | ✅ Production tested |
 | **OpenSearch** | Wiz | [amazon-opensearch](https://endoflife.date/amazon-opensearch), [elasticsearch](https://endoflife.date/elasticsearch) | ✅ Production tested |
 | **RDS MySQL** | Wiz | [amazon-rds-mysql](https://endoflife.date/amazon-rds-mysql) | ✅ Production tested |
