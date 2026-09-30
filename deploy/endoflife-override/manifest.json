@@ -4,11 +4,11 @@
     {
       "product": "amazon-aurora-mysql",
       "path": "api/amazon-aurora-mysql.json",
-      "reason": "Product pending upstream inclusion",
+      "reason": "Upstream only publishes major cycles; Aurora MySQL minors (3.04, 3.08, ...) reach end of standard support years before the major, so per-minor cycles from the AWS release calendar are added here",
       "owner": "@block/block-platform",
-      "source_url": "https://github.com/endoflife-date/endoflife.date/pull/9534",
-      "reviewed_on": "2026-08-05",
-      "review_due_on": "2026-09-04"
+      "source_url": "https://docs.aws.amazon.com/AmazonRDS/latest/AuroraMySQLReleaseNotes/AuroraMySQL.release-calendars.html",
+      "reviewed_on": "2026-09-30",
+      "review_due_on": "2026-10-30"
     },
     {
       "product": "amazon-opensearch",
