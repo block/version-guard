@@ -40,8 +40,8 @@ func TestValidateManifest(t *testing.T) {
 		{name: "invalid source URL", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].SourceURL = "http://example.com/source" }), wantErr: "must use https"},
 		{name: "malformed source URL", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].SourceURL = "https://[invalid" }), wantErr: "valid https URL"},
 		{name: "invalid review date", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewedOn = "August 5" }), wantErr: "YYYY-MM-DD"},
-		{name: "review due before reviewed", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = "2026-08-04" }), wantErr: "before reviewed_on"},
-		{name: "review interval over 30 days", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = "2026-09-05" }), wantErr: "exceeds 30 days"},
+		{name: "review due before reviewed", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = shiftDate(t, m.Overrides[0].ReviewedOn, -1) }), wantErr: "before reviewed_on"},
+		{name: "review interval over 30 days", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = shiftDate(t, m.Overrides[0].ReviewedOn, 31) }), wantErr: "exceeds 30 days"},
 		{name: "path escapes API directory", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].Path = "api/../manifest.json" }), wantErr: "direct api/"},
 		{name: "nested API path", mutate: func(t *testing.T, root string) {
 			nested := filepath.Join(root, "api", "nested", "amazon-aurora-mysql.json")
@@ -99,8 +99,13 @@ func TestValidateManifest(t *testing.T) {
 			data = append(data, []byte("\n{}")...)
 			require.NoError(t, os.WriteFile(path, data, 0o600))
 		}, wantErr: "multiple JSON values"},
-		{name: "overdue review warns", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = "2026-08-06" }), wantWarning: "review overdue"},
+		{name: "overdue review warns", mutate: mutateManifest(func(m *manifest) { m.Overrides[0].ReviewDueOn = shiftDate(t, m.Overrides[0].ReviewedOn, 1) }), wantWarning: "review overdue"},
 	}
+
+	// Two days after the first override was reviewed: inside its review window,
+	// but past a due date moved to the following day.
+	reviewedOn, _ := repositoryReviewDates(t)
+	now := reviewedOn.AddDate(0, 0, 2)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -109,7 +114,7 @@ func TestValidateManifest(t *testing.T) {
 				tt.mutate(t, root)
 			}
 			var warnings bytes.Buffer
-			err := validateManifest(root, time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC), &warnings)
+			err := validateManifest(root, now, &warnings)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
@@ -121,13 +126,15 @@ func TestValidateManifest(t *testing.T) {
 }
 
 func TestValidateManifestReviewDueDateBoundary(t *testing.T) {
+	// The earliest due date is the first moment any override can be overdue.
+	reviewDueOn := earliestReviewDueDate(t)
 	tests := []struct {
 		name        string
 		now         time.Time
 		wantWarning string
 	}{
-		{name: "due date remains valid for full UTC day", now: time.Date(2026, 9, 4, 23, 59, 59, 0, time.UTC)},
-		{name: "following UTC day warns", now: time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC), wantWarning: "review overdue"},
+		{name: "due date remains valid for full UTC day", now: reviewDueOn.Add(24*time.Hour - time.Second)},
+		{name: "following UTC day warns", now: reviewDueOn.AddDate(0, 0, 1), wantWarning: "review overdue"},
 	}
 
 	for _, tt := range tests {
@@ -159,6 +166,44 @@ func mutateManifest(mutate func(*manifest)) func(*testing.T, string) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(path, data, 0o600))
 	}
+}
+
+// repositoryReviewDates returns the first override's reviewed_on and
+// review_due_on so date-sensitive cases track the manifest as it is reviewed.
+func repositoryReviewDates(t *testing.T) (reviewedOn, reviewDueOn time.Time) {
+	t.Helper()
+	m, err := readManifest("manifest.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, m.Overrides)
+	reviewedOn, err = time.Parse(dateLayout, m.Overrides[0].ReviewedOn)
+	require.NoError(t, err)
+	reviewDueOn, err = time.Parse(dateLayout, m.Overrides[0].ReviewDueOn)
+	require.NoError(t, err)
+	return reviewedOn, reviewDueOn
+}
+
+// earliestReviewDueDate returns the soonest review_due_on across all overrides.
+func earliestReviewDueDate(t *testing.T) time.Time {
+	t.Helper()
+	m, err := readManifest("manifest.json")
+	require.NoError(t, err)
+	require.NotEmpty(t, m.Overrides)
+	var earliest time.Time
+	for _, override := range m.Overrides {
+		due, err := time.Parse(dateLayout, override.ReviewDueOn)
+		require.NoError(t, err)
+		if earliest.IsZero() || due.Before(earliest) {
+			earliest = due
+		}
+	}
+	return earliest
+}
+
+func shiftDate(t *testing.T, value string, days int) string {
+	t.Helper()
+	parsed, err := time.Parse(dateLayout, value)
+	require.NoError(t, err)
+	return parsed.AddDate(0, 0, days).Format(dateLayout)
 }
 
 func copyRepositoryFixture(t *testing.T) string {
